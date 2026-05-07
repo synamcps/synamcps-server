@@ -37,6 +37,7 @@ func NewHandler(cfg config.Config, sessions *session.Store, accessService *acces
 		_ = json.NewEncoder(w).Encode(caps)
 	})
 
+	mux.Handle("/assets/", http.StripPrefix("/assets/", http.FileServer(http.Dir("web/assets"))))
 	mux.HandleFunc("/login", loginHandler(cfg, sessions, accessService))
 	mux.HandleFunc("/logout", logoutHandler())
 	mux.HandleFunc("/app", appHandler(sessions))
@@ -147,35 +148,49 @@ func appHandler(sessions *session.Store) http.HandlerFunc {
 	}
 }
 
-const loginHTML = `<!doctype html><html><head><title>Syna MCP Login</title>
+const loginHTML = `<!doctype html><html><head><title>Synamcps Login</title>
 <style>
 body{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;margin:0;min-height:100vh;display:grid;place-items:center;background:#0f172a;color:#e2e8f0}
-form{border:1px solid #334155;border-radius:14px;background:#111827;padding:28px;min-width:320px}
+form{border:1px solid #334155;border-radius:14px;background:#000000;padding:28px;min-width:320px}
 input,button{box-sizing:border-box;width:100%;margin:8px 0;padding:10px;border-radius:8px;border:1px solid #334155;background:#020617;color:#e5e7eb}
 button{cursor:pointer;background:#2563eb;border-color:#2563eb}
+.login-logo{display:block;margin:0 auto 18px;max-width:220px;height:auto}
 </style></head><body>
 <form method="post" action="/login">
-<h1>Syna MCP Admin</h1>
+<img class="login-logo" src="/assets/synamcp-logo-medium.png" alt="Synamcps"/>
+<h1>Synamcps Admin</h1>
 <label>Username<input name="username" autocomplete="username" autofocus></label>
 <label>Password<input name="password" type="password" autocomplete="current-password"></label>
 <button type="submit">Log in</button>
 </form>
 </body></html>`
 
-const baseHTML = `<!doctype html><html><head><title>Syna MCP Admin</title>
+const baseHTML = `<!doctype html><html><head><title>Synamcps Admin</title>
 <style>
-body{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;margin:24px;background:#0f172a;color:#e2e8f0}
+body{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;margin:0;background:#0f172a;color:#e2e8f0}
 input,select,textarea,button{margin:4px;padding:8px;border-radius:6px;border:1px solid #334155;background:#111827;color:#e5e7eb}
 button{cursor:pointer;background:#2563eb;border-color:#2563eb}
-nav button{background:#1e293b;border-color:#334155}
+nav{display:flex;flex-direction:column;gap:8px;margin-top:18px}
+nav button{background:#1e293b;border-color:#334155;text-align:left;width:100%}
 section{display:none;margin-top:18px}.active{display:block}
 table{border-collapse:collapse;width:100%;margin-top:12px}td,th{border-bottom:1px solid #334155;padding:8px;text-align:left}
 pre{background:#020617;padding:12px;border-radius:8px;overflow:auto}
 .card{border:1px solid #334155;border-radius:10px;padding:14px;margin:10px 0;background:#111827}
+.layout{display:grid;grid-template-columns:146px 1fr;min-height:100vh}
+.sidebar{background:#020617;border-right:1px solid #334155;padding:18px;position:sticky;top:0;height:100vh;box-sizing:border-box}
+.sidebar-logo{display:block;width:110px;height:110px;object-fit:contain;margin-bottom:16px}
+.sidebar-links{position:fixed;top:18px;right:28px;display:flex;gap:14px;align-items:center;z-index:20}
+.sidebar a{color:#93c5fd;text-decoration:none}
+.main{padding:28px;overflow:auto}
+.page-title{margin-top:0}
 </style></head><body>
-<h1>Syna MCP Admin</h1>
-<p><a href="#" onclick="editOwnUser();return false" style="color:#93c5fd">Edit my user</a> · <a href="/logout" style="color:#93c5fd">Log out</a></p>
-<label>Bearer token <input id="token" style="width:520px" placeholder="JWT or Syna MCP token"/></label>
+<div class="layout">
+<aside class="sidebar">
+<img class="sidebar-logo" src="/assets/synamcp-logo-small.png" alt="Synamcps"/>
+<div class="sidebar-links">
+<a id="currentUserLink" href="#" onclick="editOwnUser();return false">Loading user...</a>
+<a href="/logout">Log out</a>
+</div>
 <nav>
 <button onclick="showTab('dashboard')">Dashboard</button>
 <button onclick="showTab('users')">Users</button>
@@ -185,6 +200,10 @@ pre{background:#020617;padding:12px;border-radius:8px;overflow:auto}
 <button onclick="showTab('usage')">Usage</button>
 <button onclick="showTab('connect')">MCP Connect</button>
 </nav>
+</aside>
+<main class="main">
+<h1 class="page-title">Synamcps Admin</h1>
+<label>Bearer token <input id="token" style="width:520px" placeholder="JWT or Synamcps token"/></label>
 
 <section id="dashboard" class="active"><h2>Dashboard</h2><button onclick="loadAll()">Refresh</button><div id="dashboardOut" class="card"></div></section>
 
@@ -288,12 +307,30 @@ async function deleteToken(id){if(confirm('Delete token '+id+'?')){await api('/a
 async function connectConfig(){const id=connectTokenId.value;const data=await api('/api/admin/tokens/'+id+'/connect-options',{method:'POST',body:JSON.stringify({client:connectClient.value,rawToken:connectRawToken.value})});connectOut.textContent=JSON.stringify(data,null,2)}
 async function loadUsage(){const data=await api('/api/admin/usage/series?groupBy='+usageGroup.value);usageOut.textContent=JSON.stringify(data,null,2);drawUsage(data)}
 function drawUsage(series){const c=usageChart,ctx=c.getContext('2d');ctx.clearRect(0,0,c.width,c.height);ctx.fillStyle='#e2e8f0';ctx.fillText('Usage by '+usageGroup.value,20,24);const vals=(series||[]).map(s=>s.points?.[0]?.value||0);const max=Math.max(1,...vals);(series||[]).forEach((s,i)=>{const v=s.points?.[0]?.value||0;const x=20+i*80;const h=Math.round((v/max)*180);ctx.fillStyle='#38bdf8';ctx.fillRect(x,230-h,48,h);ctx.fillStyle='#e2e8f0';ctx.fillText(String(v),x,224-h);ctx.fillText(Object.values(s.labels||{})[0]||'',x,250)})}
-async function loadAll(){await Promise.all([loadUsers(),loadGroups(),loadStorages(),loadTokens(),loadUsage()]);dashboardOut.textContent='Loaded users, groups, storages, tokens and usage.'}
+async function loadCurrentUser(){const me=await api('/api/admin/me');if(me&&me.id){currentUserLink.textContent=me.email||me.displayName||me.externalSubject||me.id}}
+async function loadAll(){await Promise.all([loadCurrentUser(),loadUsers(),loadGroups(),loadStorages(),loadTokens(),loadUsage()]);dashboardOut.textContent='Loaded users, groups, storages, tokens and usage.'}
 loadAll();
 </script>
+</main>
+</div>
 </body></html>`
 
-const mcpConnectHTML = `<!doctype html><html><head><title>MCP Connect</title></head><body>
+const mcpConnectHTML = `<!doctype html><html><head><title>MCP Connect</title>
+<style>
+body{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;margin:0;color:#111827}
+.layout{display:grid;grid-template-columns:146px 1fr;min-height:100vh}
+.sidebar{background:#f8fafc;border-right:1px solid #cbd5e1;padding:18px;box-sizing:border-box}
+.sidebar-logo{display:block;width:110px;height:110px;object-fit:contain;margin-bottom:16px}
+.sidebar a{display:block;margin:10px 0;color:#2563eb}
+.main{padding:28px}
+</style></head><body>
+<div class="layout">
+<aside class="sidebar">
+<img class="sidebar-logo" src="/assets/synamcp-logo-small.png" alt="Synamcps"/>
+<a href="/app">Admin</a>
+<a href="/logout">Log out</a>
+</aside>
+<main class="main">
 <h1>MCP Connection Guide</h1>
 <div id="caps">loading...</div>
 <script>
@@ -312,4 +349,6 @@ fetch('/api/capabilities').then(r=>r.json()).then(c=>{
   root.appendChild(ul);
 });
 </script>
+</main>
+</div>
 </body></html>`

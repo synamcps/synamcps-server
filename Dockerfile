@@ -9,6 +9,7 @@ FROM alpine:3.20
 WORKDIR /app
 COPY --from=build /out/server /app/server
 COPY configs /app/configs
+COPY web /app/web
 ENV CONFIG_PATH=/app/configs/config.example.yaml
 EXPOSE 8080
 CMD ["/app/server"]
