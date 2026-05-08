@@ -277,7 +277,10 @@ pre{background:#020617;padding:12px;border-radius:8px;overflow:auto}
 
 <section id="addItem"><h2>Add item</h2>
 <div class="card">
-<label>Storage ID <input id="addStorageId" placeholder="storage id" style="width:420px"/></label><br/>
+<label>Storage
+  <select id="addStorageId" style="width:440px"></select>
+</label>
+<button onclick="refreshAddStorages()">Refresh storages</button><br/>
 <label>Title <input id="addTitle" placeholder="title" style="width:520px"/></label><br/>
 <label>Type
   <select id="addType" onchange="renderAddType()">
@@ -318,7 +321,22 @@ pre{background:#020617;padding:12px;border-radius:8px;overflow:auto}
 <input id="connectRawToken" placeholder="raw token, only available after create/rotate" style="width:420px"/>
 <select id="connectClient"><option value="cursor">Cursor</option><option value="claude_desktop">Claude Desktop</option><option value="claude_code">Claude Code</option><option value="continue">Continue</option><option value="cline">Cline</option><option value="generic">Generic MCP</option></select>
 <button onclick="connectConfig()">Generate config</button>
-<pre id="connectOut"></pre></section>
+<div class="card" style="margin-top:10px">
+<div style="display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:wrap">
+  <div><b>Config file</b>: <span id="connectFileName" class="muted">—</span></div>
+  <button id="connectCopyBtn" onclick="copyConnectBody()" style="display:none">Copy configBody</button>
+</div>
+<div style="margin-top:10px">
+  <b>Instructions</b>
+  <ol id="connectInstructions" class="muted" style="margin-top:8px"></ol>
+</div>
+<div style="margin-top:10px">
+  <b>configBody</b> <span class="muted">(click to copy)</span>
+  <pre id="connectBody" onclick="copyConnectBody()" style="cursor:pointer"></pre>
+  <div id="connectCopyHint" class="muted"></div>
+</div>
+</div>
+<pre id="connectOut" style="display:none"></pre></section>
 
 <pre id="out"></pre>
 <script>
@@ -347,13 +365,80 @@ async function addGroupMember(){await api('/api/admin/groups/'+memberGroupId.val
 async function removeGroupMember(){await removeGroupMemberById(memberGroupId.value,memberUserId.value)}
 async function removeGroupMemberById(groupId,userId){await api('/api/admin/groups/'+groupId+'/members/'+userId,{method:'DELETE'});loadGroupMembers()}
 function openStorage(id){currentStorageId.value=id;storageItemsPage.value='1';showTab('storage');loadStorageDetails()}
-async function loadStorages(){const data=await api('/api/admin/storages');window.storages=data;document.getElementById('storagesOut').innerHTML=renderRows(data,r=>actionButton('Open',"openStorage('"+r.id+"')")+actionButton('Delete',"deleteStorage('"+r.id+"')"))}
+function fillStorageSelect(){
+  const sel=document.getElementById('addStorageId');
+  if(!sel) return;
+  const current=sel.value;
+  sel.innerHTML='';
+  const opt0=document.createElement('option');
+  opt0.value='';
+  opt0.textContent='(auto / personal default)';
+  sel.appendChild(opt0);
+  const list=Array.isArray(window.storages)?window.storages:[];
+  list.forEach(s=>{
+    const o=document.createElement('option');
+    o.value=s.id;
+    o.textContent=(s.name||s.id)+' ('+s.id+')';
+    sel.appendChild(o);
+  });
+  if(current) sel.value=current;
+}
+async function refreshAddStorages(){await loadStorages();fillStorageSelect();}
+async function loadStorages(){const data=await api('/api/admin/storages');window.storages=data;document.getElementById('storagesOut').innerHTML=renderRows(data,r=>actionButton('Open',"openStorage('"+r.id+"')")+actionButton('Delete',"deleteStorage('"+r.id+"')"));fillStorageSelect()}
 async function createStorage(){await api('/api/admin/storages',{method:'POST',body:JSON.stringify({slug:storageSlug.value,name:storageName.value,visibility:storageVisibility.value})});loadStorages()}
 async function deleteStorage(id){if(confirm('Delete storage '+id+'?')){await api('/api/admin/storages/'+id,{method:'DELETE'});loadStorages()}}
 async function loadTokens(){const data=await api('/api/admin/tokens');document.getElementById('tokensOut').innerHTML=renderRows(data,r=>actionButton('Connect',"connectTokenId.value='"+r.id+"';showTab('connect')")+actionButton('Delete',"deleteToken('"+r.id+"')"))}
 async function createToken(){const storageIds=tokenStorageIds.value.split(',').map(s=>s.trim()).filter(Boolean);const body={name:tokenName.value,mode:tokenMode.value,storageIds,rateLimit:{enabled:true,requestsPerMinute:Number(tokenRpm.value||0),requestsPerHour:Number(tokenRph.value||0),requestsPerDay:Number(tokenRpd.value||0)}};const data=await api('/api/admin/tokens',{method:'POST',body:JSON.stringify(body)});if(data.rawToken){rawTokenBox.style.display='block';rawToken.textContent=data.rawToken;connectRawToken.value=data.rawToken;if(data.token)connectTokenId.value=data.token.id}loadTokens()}
 async function deleteToken(id){if(confirm('Delete token '+id+'?')){await api('/api/admin/tokens/'+id,{method:'DELETE'});loadTokens()}}
-async function connectConfig(){const id=connectTokenId.value;const data=await api('/api/admin/tokens/'+id+'/connect-options',{method:'POST',body:JSON.stringify({client:connectClient.value,rawToken:connectRawToken.value})});connectOut.textContent=JSON.stringify(data,null,2)}
+let lastConnectBody='';
+async function connectConfig(){
+  connectCopyHint.textContent='';
+  connectFileName.textContent='—';
+  connectInstructions.innerHTML='';
+  connectBody.textContent='Loading...';
+  connectCopyBtn.style.display='none';
+  lastConnectBody='';
+  const id=connectTokenId.value;
+  const res=await fetch('/api/admin/tokens/'+encodeURIComponent(id)+'/connect-options',{method:'POST',headers:headers(),body:JSON.stringify({client:connectClient.value,rawToken:connectRawToken.value})});
+  const txt=await res.text();
+  let data=null; try{data=JSON.parse(txt)}catch(e){}
+  if(!data){
+    connectBody.textContent=txt;
+    return;
+  }
+  if(!res.ok){
+    connectBody.textContent=JSON.stringify(data,null,2);
+    return;
+  }
+  connectFileName.textContent=data.configFileName||'';
+  (data.instructions||[]).forEach(s=>{
+    const li=document.createElement('li');
+    li.textContent=s;
+    connectInstructions.appendChild(li);
+  });
+  lastConnectBody=String(data.configBody||'');
+  connectBody.textContent=lastConnectBody;
+  connectCopyBtn.style.display=lastConnectBody?'inline-block':'none';
+}
+async function copyConnectBody(){
+  if(!lastConnectBody){return;}
+  try{
+    if(navigator.clipboard && navigator.clipboard.writeText){
+      await navigator.clipboard.writeText(lastConnectBody);
+    }else{
+      const ta=document.createElement('textarea');
+      ta.value=lastConnectBody;
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      ta.remove();
+    }
+    connectCopyHint.textContent='Copied to clipboard.';
+    setTimeout(()=>{connectCopyHint.textContent='';},1500);
+  }catch(e){
+    connectCopyHint.textContent='Copy failed. Select text manually.';
+  }
+}
 async function loadUsage(){const data=await api('/api/admin/usage/series?groupBy='+usageGroup.value);usageOut.textContent=JSON.stringify(data,null,2);drawUsage(data)}
 function drawUsage(series){const c=usageChart,ctx=c.getContext('2d');ctx.clearRect(0,0,c.width,c.height);ctx.fillStyle='#e2e8f0';ctx.fillText('Usage by '+usageGroup.value,20,24);const vals=(series||[]).map(s=>s.points?.[0]?.value||0);const max=Math.max(1,...vals);(series||[]).forEach((s,i)=>{const v=s.points?.[0]?.value||0;const x=20+i*80;const h=Math.round((v/max)*180);ctx.fillStyle='#38bdf8';ctx.fillRect(x,230-h,48,h);ctx.fillStyle='#e2e8f0';ctx.fillText(String(v),x,224-h);ctx.fillText(Object.values(s.labels||{})[0]||'',x,250)})}
 async function loadCurrentUser(){const me=await api('/api/admin/me');if(me&&me.id){currentUserLink.textContent=me.email||me.displayName||me.externalSubject||me.id}}
