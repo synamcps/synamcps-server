@@ -721,6 +721,75 @@ func (s *Store) DeleteStorage(ctx context.Context, storageID string) error {
 	return nil
 }
 
+type TokenStorageAccess struct {
+	TokenID        string            `json:"tokenId"`
+	TokenName      string            `json:"tokenName"`
+	OwnerSubjectKey string           `json:"ownerSubjectKey"`
+	TokenMode      models.AccessMode `json:"tokenMode"`
+	StorageID      string            `json:"storageId"`
+	MaxMode        models.AccessMode `json:"maxMode"`
+	ToolAllowlist  []string          `json:"toolAllowlist"`
+	CreatedAt      time.Time         `json:"createdAt"`
+}
+
+func (s *Store) TokenAccessByStorage(ctx context.Context, storageID string) ([]TokenStorageAccess, error) {
+	if s.useDB {
+		rows, err := s.pool.Query(ctx, `
+SELECT s.token_id, t.name, t.owner_subject_key, t.mode, s.storage_id, s.max_mode, s.tool_allowlist, s.created_at
+FROM access_token_storages s
+JOIN access_tokens t ON t.id = s.token_id
+WHERE s.storage_id=$1
+ORDER BY s.created_at DESC`, storageID)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		var out []TokenStorageAccess
+		for rows.Next() {
+			var rec TokenStorageAccess
+			var tokenMode, maxMode string
+			if err := rows.Scan(&rec.TokenID, &rec.TokenName, &rec.OwnerSubjectKey, &tokenMode, &rec.StorageID, &maxMode, &rec.ToolAllowlist, &rec.CreatedAt); err != nil {
+				return nil, err
+			}
+			rec.TokenMode = models.AccessMode(tokenMode)
+			rec.MaxMode = models.AccessMode(maxMode)
+			if rec.ToolAllowlist == nil {
+				rec.ToolAllowlist = []string{}
+			}
+			out = append(out, rec)
+		}
+		return out, rows.Err()
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var out []TokenStorageAccess
+	for _, scope := range s.tokenScopes {
+		if scope.StorageID != storageID {
+			continue
+		}
+		t, ok := s.tokens[scope.TokenID]
+		if !ok {
+			continue
+		}
+		allow := scope.ToolAllowlist
+		if allow == nil {
+			allow = []string{}
+		}
+		out = append(out, TokenStorageAccess{
+			TokenID:         t.ID,
+			TokenName:       t.Name,
+			OwnerSubjectKey: t.OwnerSubjectKey,
+			TokenMode:       t.Mode,
+			StorageID:       scope.StorageID,
+			MaxMode:         scope.MaxMode,
+			ToolAllowlist:   allow,
+			CreatedAt:       scope.CreatedAt,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.After(out[j].CreatedAt) })
+	return out, nil
+}
+
 func (s *Store) UpsertACL(ctx context.Context, b models.ACLBinding) (models.ACLBinding, error) {
 	if b.ID == "" {
 		b.ID = uuid.NewString()

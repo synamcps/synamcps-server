@@ -48,6 +48,7 @@ type SaveRequest struct {
 	Principal  models.Principal
 	StorageID  string
 	S3Prefix   string
+	RawS3Key   string
 	Title      string
 	Body       string
 	MimeType   string
@@ -86,6 +87,10 @@ func (p *Pipeline) Save(ctx context.Context, req SaveRequest) (models.DocumentRe
 		Body:       req.Body,
 		CreatedAt:  time.Now().UTC(),
 		UpdatedAt:  time.Now().UTC(),
+	}
+
+	if req.RawS3Key != "" {
+		doc.S3Key = req.RawS3Key
 	}
 
 	if int64(len(req.Body)) > p.cfg.S3.LargeDocBytes && p.cfg.S3.LargeDocBytes > 0 {
@@ -164,6 +169,119 @@ func (p *Pipeline) Save(ctx context.Context, req SaveRequest) (models.DocumentRe
 		return models.DocumentRecord{}, err
 	}
 	return doc, nil
+}
+
+type BinarySaveRequest struct {
+	Principal  models.Principal
+	StorageID  string
+	S3Prefix   string
+	Title      string
+	Filename   string
+	Payload    []byte
+	MimeType   string
+	Visibility models.Visibility
+	GroupIDs   []string
+	Source     string
+	SourceURL  string
+	Channel    string
+}
+
+func (p *Pipeline) SaveBinary(ctx context.Context, req BinarySaveRequest) (models.DocumentRecord, error) {
+	if req.Visibility == "" {
+		req.Visibility = models.VisibilityPersonal
+	}
+	if req.GroupIDs == nil {
+		req.GroupIDs = []string{}
+	}
+
+	storageID := defaultStorageID(req.StorageID)
+	prefix := req.S3Prefix
+	if prefix == "" {
+		prefix = "storages/" + storageID + "/"
+	}
+	fileName := strings.TrimSpace(req.Filename)
+	if fileName == "" {
+		fileName = "upload.bin"
+	}
+	rawKey := strings.TrimRight(prefix, "/") + "/items/" + uuid.NewString() + "/" + sanitizeS3Name(fileName)
+	if err := p.blobStore.Put(ctx, rawKey, req.Payload); err != nil {
+		return models.DocumentRecord{}, err
+	}
+
+	text := extractTextBestEffort(req.Payload, req.MimeType)
+	if strings.TrimSpace(req.Title) == "" {
+		req.Title = fileName
+	}
+	mime := req.MimeType
+	if mime == "" {
+		mime = "application/octet-stream"
+	}
+	return p.Save(ctx, SaveRequest{
+		Principal:  req.Principal,
+		StorageID:  storageID,
+		S3Prefix:   prefix,
+		RawS3Key:   rawKey,
+		Title:      req.Title,
+		Body:       text,
+		MimeType:   mime,
+		Visibility: req.Visibility,
+		GroupIDs:   req.GroupIDs,
+		Source:     req.Source,
+		SourceURL:  req.SourceURL,
+		Channel:    req.Channel,
+	})
+}
+
+func sanitizeS3Name(name string) string {
+	// keep it simple and predictable
+	name = strings.ReplaceAll(name, "\\", "/")
+	if i := strings.LastIndex(name, "/"); i >= 0 {
+		name = name[i+1:]
+	}
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "file.bin"
+	}
+	name = strings.Map(func(r rune) rune {
+		switch {
+		case r >= 'a' && r <= 'z':
+			return r
+		case r >= 'A' && r <= 'Z':
+			return r
+		case r >= '0' && r <= '9':
+			return r
+		case r == '.' || r == '-' || r == '_' || r == ' ':
+			return r
+		default:
+			return '-'
+		}
+	}, name)
+	return strings.ReplaceAll(name, " ", "-")
+}
+
+func extractTextBestEffort(payload []byte, mime string) string {
+	if len(payload) == 0 {
+		return ""
+	}
+	m := strings.ToLower(strings.TrimSpace(mime))
+	if strings.HasPrefix(m, "text/") || m == "application/json" || m == "application/xml" || m == "application/xhtml+xml" {
+		return string(payload)
+	}
+	// best-effort UTF-8 decode and strip obvious binary noise
+	s := string(payload)
+	s = strings.Map(func(r rune) rune {
+		if r == '\n' || r == '\r' || r == '\t' {
+			return r
+		}
+		if r < 32 {
+			return -1
+		}
+		return r
+	}, s)
+	if len(strings.TrimSpace(s)) == 0 {
+		return ""
+	}
+	return s
 }
 
 func defaultStorageID(id string) string {

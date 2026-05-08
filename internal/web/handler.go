@@ -196,6 +196,8 @@ pre{background:#020617;padding:12px;border-radius:8px;overflow:auto}
 <button onclick="showTab('users')">Users</button>
 <button onclick="showTab('groups')">Groups</button>
 <button onclick="showTab('storages')">Storages</button>
+<button onclick="showTab('storage')">Storage</button>
+<button onclick="showTab('addItem')">Add item</button>
 <button onclick="showTab('tokens')">Tokens</button>
 <button onclick="showTab('usage')">Usage</button>
 <button onclick="showTab('connect')">MCP Connect</button>
@@ -251,6 +253,46 @@ pre{background:#020617;padding:12px;border-radius:8px;overflow:auto}
 <button onclick="createStorage()">Create storage</button>
 <div id="storagesOut"></div></section>
 
+<section id="storage"><h2>Storage</h2>
+<div class="card">
+<b>Selected storage</b><br/>
+<input id="currentStorageId" placeholder="storage id" style="width:420px"/>
+<button onclick="loadStorageDetails()">Load</button>
+<label style="margin-left:10px">Page <input id="storageItemsPage" value="1" size="4"/></label>
+<label>Page size <input id="storageItemsPageSize" value="20" size="4"/></label>
+<button onclick="prevStoragePage()">Prev</button>
+<button onclick="nextStoragePage()">Next</button>
+</div>
+<div class="card"><b>Storage info</b><pre id="storageInfoOut"></pre></div>
+<div class="card"><b>Access (users / groups)</b><pre id="storageAclOut"></pre></div>
+<div class="card"><b>Keys (tokens)</b><pre id="storageTokensOut"></pre></div>
+<div class="card"><b>Items</b><pre id="storageItemsOut"></pre></div>
+</section>
+
+<section id="addItem"><h2>Add item</h2>
+<div class="card">
+<label>Storage ID <input id="addStorageId" placeholder="storage id" style="width:420px"/></label><br/>
+<label>Title <input id="addTitle" placeholder="title" style="width:520px"/></label><br/>
+<label>Type
+  <select id="addType" onchange="renderAddType()">
+    <option value="text">text</option>
+    <option value="file">file</option>
+    <option value="link">link</option>
+  </select>
+</label>
+<label style="margin-left:10px">Visibility
+  <select id="addVisibility">
+    <option value="personal">personal</option>
+    <option value="group">group</option>
+    <option value="public">public</option>
+  </select>
+</label>
+<div id="addTypeBox" style="margin-top:10px"></div>
+<button onclick="submitAddItem()">Add</button>
+<pre id="addItemOut"></pre>
+</div>
+</section>
+
 <section id="tokens"><h2>Tokens</h2>
 <input id="tokenName" placeholder="token name"/><input id="tokenStorageIds" placeholder="storage ids, comma-separated"/>
 <select id="tokenMode"><option value="read">read</option><option value="read_write">read_write</option></select>
@@ -298,7 +340,8 @@ async function loadGroupMembers(){if(!memberGroupId.value)return;const data=awai
 async function addGroupMember(){await api('/api/admin/groups/'+memberGroupId.value+'/members/'+memberUserId.value,{method:'PUT'});loadGroupMembers()}
 async function removeGroupMember(){await removeGroupMemberById(memberGroupId.value,memberUserId.value)}
 async function removeGroupMemberById(groupId,userId){await api('/api/admin/groups/'+groupId+'/members/'+userId,{method:'DELETE'});loadGroupMembers()}
-async function loadStorages(){const data=await api('/api/admin/storages');window.storages=data;document.getElementById('storagesOut').innerHTML=renderRows(data,r=>actionButton('Delete',"deleteStorage('"+r.id+"')"))}
+function openStorage(id){currentStorageId.value=id;storageItemsPage.value='1';showTab('storage');loadStorageDetails()}
+async function loadStorages(){const data=await api('/api/admin/storages');window.storages=data;document.getElementById('storagesOut').innerHTML=renderRows(data,r=>actionButton('Open',"openStorage('"+r.id+"')")+actionButton('Delete',"deleteStorage('"+r.id+"')"))}
 async function createStorage(){await api('/api/admin/storages',{method:'POST',body:JSON.stringify({slug:storageSlug.value,name:storageName.value,visibility:storageVisibility.value})});loadStorages()}
 async function deleteStorage(id){if(confirm('Delete storage '+id+'?')){await api('/api/admin/storages/'+id,{method:'DELETE'});loadStorages()}}
 async function loadTokens(){const data=await api('/api/admin/tokens');document.getElementById('tokensOut').innerHTML=renderRows(data,r=>actionButton('Connect',"connectTokenId.value='"+r.id+"';showTab('connect')")+actionButton('Delete',"deleteToken('"+r.id+"')"))}
@@ -310,6 +353,80 @@ function drawUsage(series){const c=usageChart,ctx=c.getContext('2d');ctx.clearRe
 async function loadCurrentUser(){const me=await api('/api/admin/me');if(me&&me.id){currentUserLink.textContent=me.email||me.displayName||me.externalSubject||me.id}}
 async function loadAll(){await Promise.all([loadCurrentUser(),loadUsers(),loadGroups(),loadStorages(),loadTokens(),loadUsage()]);dashboardOut.textContent='Loaded users, groups, storages, tokens and usage.'}
 loadAll();
+
+function storagePageParams(){const p=Math.max(1,Number(storageItemsPage.value||'1'));const ps=Math.max(1,Math.min(200,Number(storageItemsPageSize.value||'20')));return {page:p,pageSize:ps}}
+function prevStoragePage(){storageItemsPage.value=String(Math.max(1,Number(storageItemsPage.value||'1')-1));loadStorageDetails()}
+function nextStoragePage(){storageItemsPage.value=String(Number(storageItemsPage.value||'1')+1);loadStorageDetails()}
+async function loadStorageDetails(){
+  const id=(currentStorageId.value||'').trim();
+  if(!id){storageInfoOut.textContent='';storageAclOut.textContent='';storageTokensOut.textContent='';storageItemsOut.textContent='';return;}
+  storageInfoOut.textContent='Loading...';storageAclOut.textContent='Loading...';storageTokensOut.textContent='Loading...';storageItemsOut.textContent='Loading...';
+
+  const details=await api('/api/admin/storages/'+encodeURIComponent(id));
+  if(details && details.storage){
+    storageInfoOut.textContent=JSON.stringify(details.storage,null,2);
+    storageAclOut.textContent=JSON.stringify(details.acl||[],null,2);
+    storageTokensOut.textContent=JSON.stringify(details.tokens||[],null,2);
+  }else{
+    storageInfoOut.textContent=JSON.stringify(details,null,2);
+    storageAclOut.textContent='';
+    storageTokensOut.textContent='';
+    storageItemsOut.textContent='';
+    return;
+  }
+
+  const {page,pageSize}=storagePageParams();
+  const q=new URLSearchParams({storageId:id,page:String(page),pageSize:String(pageSize)});
+  const items=await api('/api/knowledge?'+q.toString());
+  storageItemsOut.textContent=JSON.stringify(items,null,2);
+}
+
+function renderAddType(){
+  const box=document.getElementById('addTypeBox');
+  const t=document.getElementById('addType').value;
+  if(t==='text'){
+    box.innerHTML='<label>Text<br/><textarea id="addText" rows="10" style="width:100%"></textarea></label>';
+  }else if(t==='file'){
+    box.innerHTML='<label>File <input id="addFile" type="file"/></label>';
+  }else{
+    box.innerHTML='<label>Link URL <input id="addLink" placeholder="https://..." style="width:520px"/></label>';
+  }
+}
+renderAddType();
+
+async function submitAddItem(){
+  addItemOut.textContent='Loading...';
+  const storageId=(addStorageId.value||'').trim();
+  const title=(addTitle.value||'').trim();
+  const visibility=addVisibility.value;
+  const t=addType.value;
+  if(t==='text'){
+    const text=(document.getElementById('addText').value||'');
+    const body={storageId,title,text,mimeType:'text/plain',visibility,groupIds:[],source:'admin'};
+    const res=await fetch('/api/knowledge',{method:'POST',headers:headers(),body:JSON.stringify(body)});
+    const txt=await res.text(); try{addItemOut.textContent=JSON.stringify(JSON.parse(txt),null,2)}catch(e){addItemOut.textContent=txt}
+    return;
+  }
+  if(t==='file'){
+    const f=document.getElementById('addFile').files?.[0];
+    if(!f){addItemOut.textContent='Select file';return;}
+    const fd=new FormData();
+    fd.append('storageId',storageId);
+    fd.append('title',title);
+    fd.append('visibility',visibility);
+    fd.append('source','admin');
+    fd.append('file',f,f.name);
+    const h=headers(); delete h['Content-Type'];
+    const res=await fetch('/api/knowledge/ingest/file',{method:'POST',headers:h,body:fd});
+    const txt=await res.text(); try{addItemOut.textContent=JSON.stringify(JSON.parse(txt),null,2)}catch(e){addItemOut.textContent=txt}
+    return;
+  }
+  const link=(document.getElementById('addLink').value||'').trim();
+  if(!link){addItemOut.textContent='Enter link URL';return;}
+  const body={storageId,title,url:link,visibility,source:'admin'};
+  const res=await fetch('/api/knowledge/ingest/link',{method:'POST',headers:headers(),body:JSON.stringify(body)});
+  const txt=await res.text(); try{addItemOut.textContent=JSON.stringify(JSON.parse(txt),null,2)}catch(e){addItemOut.textContent=txt}
+}
 </script>
 </main>
 </div>

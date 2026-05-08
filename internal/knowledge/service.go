@@ -94,6 +94,72 @@ func (s *Service) Save(ctx context.Context, p models.Principal, in SaveInput) (m
 	})
 }
 
+type BinaryInput struct {
+	StorageID  string            `json:"storageId"`
+	Title      string            `json:"title"`
+	Filename   string            `json:"filename"`
+	Payload    []byte            `json:"-"`
+	MimeType   string            `json:"mimeType"`
+	Visibility models.Visibility `json:"visibility"`
+	GroupIDs   []string          `json:"groupIds"`
+	Source     string            `json:"source,omitempty"`
+	SourceURL  string            `json:"sourceUrl,omitempty"`
+	Channel    string            `json:"-"`
+}
+
+func (s *Service) IngestBinary(ctx context.Context, p models.Principal, in BinaryInput) (models.DocumentRecord, error) {
+	if in.Visibility == "" {
+		in.Visibility = models.VisibilityPersonal
+	}
+	if in.GroupIDs == nil {
+		in.GroupIDs = []string{}
+	}
+	storageID := in.StorageID
+	s3Prefix := ""
+	if s.access != nil {
+		if storageID == "" {
+			_, st, err := s.access.EnsurePrincipal(ctx, p, s.s3Bucket)
+			if err != nil {
+				return models.DocumentRecord{}, err
+			}
+			storageID = st.ID
+			s3Prefix = st.S3Prefix
+		} else {
+			st, ok, err := s.access.Store().GetStorage(ctx, storageID)
+			if err != nil {
+				return models.DocumentRecord{}, err
+			}
+			if !ok {
+				return models.DocumentRecord{}, errors.New("storage not found")
+			}
+			s3Prefix = st.S3Prefix
+		}
+		if _, ok, err := s.access.CanAccessStorage(ctx, p, accessTokenFromContext(ctx), tokenScopesFromContext(ctx), storageID, models.PermissionDocumentCreate); err != nil || !ok {
+			if err != nil {
+				return models.DocumentRecord{}, err
+			}
+			return models.DocumentRecord{}, errors.New("forbidden")
+		}
+	} else if !policy.CanWrite(p, in.Visibility, in.GroupIDs) {
+		return models.DocumentRecord{}, errors.New("forbidden")
+	}
+
+	return s.pipeline.SaveBinary(ctx, ingest.BinarySaveRequest{
+		Principal:  p,
+		StorageID:  storageID,
+		S3Prefix:   s3Prefix,
+		Title:      in.Title,
+		Filename:   in.Filename,
+		Payload:    in.Payload,
+		MimeType:   in.MimeType,
+		Visibility: in.Visibility,
+		GroupIDs:   in.GroupIDs,
+		Source:     in.Source,
+		SourceURL:  in.SourceURL,
+		Channel:    in.Channel,
+	})
+}
+
 func (s *Service) Get(ctx context.Context, p models.Principal, id string) (models.DocumentRecord, error) {
 	doc, ok, err := s.catalog.Get(ctx, id)
 	if err != nil {

@@ -85,6 +85,8 @@ func (h *AdminHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.removeGroupMember(w, r, path)
 	case r.Method == http.MethodGet && path == "/storages":
 		h.listStorages(w, r, p)
+	case r.Method == http.MethodGet && strings.HasPrefix(path, "/storages/") && !strings.Contains(path, "/acl") && !strings.Contains(path, "/usage"):
+		h.getStorageDetails(w, r, path, p)
 	case r.Method == http.MethodPost && path == "/storages":
 		h.createStorage(w, r, p)
 	case r.Method == http.MethodDelete && strings.HasPrefix(path, "/storages/") && !strings.Contains(path, "/acl"):
@@ -357,6 +359,43 @@ func (h *AdminHandler) createStorage(w http.ResponseWriter, r *http.Request, p m
 		return
 	}
 	writeJSON(w, st, http.StatusCreated)
+}
+
+func (h *AdminHandler) getStorageDetails(w http.ResponseWriter, r *http.Request, path string, p models.Principal) {
+	storageID := idFromPath(path, 1)
+	st, ok, err := h.access.Store().GetStorage(r.Context(), storageID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if !ok {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	// Make sure the caller can at least read this storage.
+	if _, ok, err := h.access.CanAccessStorage(r.Context(), p, nil, nil, storageID, models.PermissionStorageRead); err != nil || !ok {
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	acl, err := h.access.Store().ACLForStorage(r.Context(), storageID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	tokens, err := h.access.Store().TokenAccessByStorage(r.Context(), storageID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, map[string]any{
+		"storage": st,
+		"acl":     acl,
+		"tokens":  tokens,
+	}, http.StatusOK)
 }
 
 func (h *AdminHandler) deleteStorage(w http.ResponseWriter, r *http.Request, path string) {

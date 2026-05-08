@@ -23,9 +23,12 @@ func NewRouterWithAdmin(gateway *auth.Gateway, sessions *session.Store, service 
 		admin := NewAdminHandler(accessService, usageService, s3Bucket)
 		mux.Handle("/api/admin/", authResolver.Middleware(admin))
 	}
+	ingestHandler := NewIngestHandler(service)
 	mux.Handle("GET /api/knowledge", authResolver.Middleware(http.HandlerFunc(handler.List)))
 	mux.Handle("POST /api/knowledge", authResolver.Middleware(http.HandlerFunc(handler.Create("api"))))
 	mux.Handle("POST /api/admin/knowledge", authResolver.Middleware(http.HandlerFunc(handler.Create("admin"))))
+	mux.Handle("POST /api/knowledge/ingest/file", authResolver.Middleware(http.HandlerFunc(ingestHandler.IngestFile)))
+	mux.Handle("POST /api/knowledge/ingest/link", authResolver.Middleware(http.HandlerFunc(ingestHandler.IngestLink)))
 	mux.Handle("POST /api/knowledge/search", authResolver.Middleware(http.HandlerFunc(handler.Search)))
 	mux.Handle("GET /api/knowledge/", authResolver.Middleware(http.HandlerFunc(handler.Get)))
 	mux.Handle("DELETE /api/knowledge/", authResolver.Middleware(http.HandlerFunc(handler.Delete)))
