@@ -194,6 +194,7 @@ pre{background:#020617;padding:12px;border-radius:8px;overflow:auto}
 <nav>
 <button onclick="showTab('dashboard')">Dashboard</button>
 <button onclick="showTab('status')">Status</button>
+<button onclick="showTab('search')">Search</button>
 <button onclick="showTab('users')">Users</button>
 <button onclick="showTab('groups')">Groups</button>
 <button onclick="showTab('storages')">Storages</button>
@@ -213,6 +214,40 @@ pre{background:#020617;padding:12px;border-radius:8px;overflow:auto}
 <section id="status"><h2>Status</h2>
 <button onclick="loadStatus()">Refresh status</button>
 <div id="statusOut" class="card">Loading...</div>
+</section>
+
+<section id="search"><h2>Search</h2>
+<div class="card">
+  <div style="display:flex;gap:10px;flex-wrap:wrap">
+    <button onclick="showSearchTab('byToken')">Search by token</button>
+    <button onclick="showSearchTab('byStorage')">Search by storage</button>
+  </div>
+  <div id="searchByToken" style="margin-top:12px">
+    <div class="muted">Uses the selected token for Authorization (paste raw token).</div>
+    <label>Token
+      <select id="searchTokenId" style="width:440px"></select>
+    </label>
+    <button onclick="refreshSearchTokens()">Refresh tokens</button><br/>
+    <label>Raw token <input id="searchRawToken" placeholder="raw token (required)" style="width:520px"/></label><br/>
+    <label>Query <input id="searchTokenQuery" placeholder="search query" style="width:520px"/></label>
+    <label style="margin-left:10px">TopK <input id="searchTokenTopK" value="10" size="4"/></label>
+    <button onclick="runSearchByToken()">Search</button>
+  </div>
+  <div id="searchByStorage" style="margin-top:12px;display:none">
+    <div class="muted">Uses the Bearer token from the top bar, and limits search to selected storage.</div>
+    <label>Storage
+      <select id="searchStorageId" style="width:440px"></select>
+    </label>
+    <button onclick="refreshSearchStorages()">Refresh storages</button><br/>
+    <label>Query <input id="searchStorageQuery" placeholder="search query" style="width:520px"/></label>
+    <label style="margin-left:10px">TopK <input id="searchStorageTopK" value="10" size="4"/></label>
+    <button onclick="runSearchByStorage()">Search</button>
+  </div>
+  <div style="margin-top:12px">
+    <div><b>Results</b></div>
+    <pre id="searchOut" style="margin-top:8px"></pre>
+  </div>
+</div>
 </section>
 
 <section id="users"><h2>Users</h2>
@@ -383,11 +418,42 @@ function fillStorageSelect(){
   });
   if(current) sel.value=current;
 }
+
+function fillSearchStorageSelect(){
+  const sel=document.getElementById('searchStorageId');
+  if(!sel) return;
+  const current=sel.value;
+  sel.innerHTML='';
+  const list=Array.isArray(window.storages)?window.storages:[];
+  list.forEach(s=>{
+    const o=document.createElement('option');
+    o.value=s.id;
+    o.textContent=(s.name||s.id)+' ('+s.id+')';
+    sel.appendChild(o);
+  });
+  if(current) sel.value=current;
+}
+
+function fillSearchTokenSelect(){
+  const sel=document.getElementById('searchTokenId');
+  if(!sel) return;
+  const current=sel.value;
+  sel.innerHTML='';
+  const list=Array.isArray(window.tokens)?window.tokens:[];
+  list.forEach(t=>{
+    const o=document.createElement('option');
+    o.value=t.id;
+    o.textContent=(t.name||t.id)+' ('+t.id+')';
+    sel.appendChild(o);
+  });
+  if(current) sel.value=current;
+}
+
 async function refreshAddStorages(){await loadStorages();fillStorageSelect();}
-async function loadStorages(){const data=await api('/api/admin/storages');window.storages=data;document.getElementById('storagesOut').innerHTML=renderRows(data,r=>actionButton('Open',"openStorage('"+r.id+"')")+actionButton('Delete',"deleteStorage('"+r.id+"')"));fillStorageSelect()}
+async function loadStorages(){const data=await api('/api/admin/storages');window.storages=data;document.getElementById('storagesOut').innerHTML=renderRows(data,r=>actionButton('Open',"openStorage('"+r.id+"')")+actionButton('Delete',"deleteStorage('"+r.id+"')"));fillStorageSelect();fillSearchStorageSelect()}
 async function createStorage(){await api('/api/admin/storages',{method:'POST',body:JSON.stringify({slug:storageSlug.value,name:storageName.value,visibility:storageVisibility.value})});loadStorages()}
 async function deleteStorage(id){if(confirm('Delete storage '+id+'?')){await api('/api/admin/storages/'+id,{method:'DELETE'});loadStorages()}}
-async function loadTokens(){const data=await api('/api/admin/tokens');document.getElementById('tokensOut').innerHTML=renderRows(data,r=>actionButton('Connect',"connectTokenId.value='"+r.id+"';showTab('connect')")+actionButton('Delete',"deleteToken('"+r.id+"')"))}
+async function loadTokens(){const data=await api('/api/admin/tokens');window.tokens=data;document.getElementById('tokensOut').innerHTML=renderRows(data,r=>actionButton('Connect',"connectTokenId.value='"+r.id+"';showTab('connect')")+actionButton('Delete',"deleteToken('"+r.id+"')"));fillSearchTokenSelect()}
 async function createToken(){const storageIds=tokenStorageIds.value.split(',').map(s=>s.trim()).filter(Boolean);const body={name:tokenName.value,mode:tokenMode.value,storageIds,rateLimit:{enabled:true,requestsPerMinute:Number(tokenRpm.value||0),requestsPerHour:Number(tokenRph.value||0),requestsPerDay:Number(tokenRpd.value||0)}};const data=await api('/api/admin/tokens',{method:'POST',body:JSON.stringify(body)});if(data.rawToken){rawTokenBox.style.display='block';rawToken.textContent=data.rawToken;connectRawToken.value=data.rawToken;if(data.token)connectTokenId.value=data.token.id}loadTokens()}
 async function deleteToken(id){if(confirm('Delete token '+id+'?')){await api('/api/admin/tokens/'+id,{method:'DELETE'});loadTokens()}}
 let lastConnectBody='';
@@ -459,6 +525,41 @@ async function loadStatus(){
 }
 async function loadAll(){await Promise.all([loadCurrentUser(),loadStatus(),loadUsers(),loadGroups(),loadStorages(),loadTokens(),loadUsage()]);dashboardOut.textContent='Loaded status, users, groups, storages, tokens and usage.'}
 loadAll();
+
+function showSearchTab(which){
+  const a=document.getElementById('searchByToken');
+  const b=document.getElementById('searchByStorage');
+  if(which==='byStorage'){a.style.display='none';b.style.display='block';}
+  else {a.style.display='block';b.style.display='none';}
+}
+async function refreshSearchTokens(){const data=await api('/api/admin/tokens');window.tokens=data;fillSearchTokenSelect();}
+async function refreshSearchStorages(){await loadStorages();fillSearchStorageSelect();}
+
+async function runSearchByToken(){
+  searchOut.textContent='Loading...';
+  const raw=(searchRawToken.value||'').trim();
+  const q=(searchTokenQuery.value||'').trim();
+  const topK=Math.max(1,Number(searchTokenTopK.value||'10'));
+  if(!raw){searchOut.textContent='Raw token is required for token search.';return;}
+  const h=headers();
+  h.Authorization='Bearer '+raw;
+  const body={query:q,topK,filters:{}};
+  const res=await fetch('/api/knowledge/search',{method:'POST',headers:h,body:JSON.stringify(body)});
+  const txt=await res.text();
+  try{searchOut.textContent=JSON.stringify(JSON.parse(txt),null,2)}catch(e){searchOut.textContent=txt}
+}
+
+async function runSearchByStorage(){
+  searchOut.textContent='Loading...';
+  const storageId=(searchStorageId.value||'').trim();
+  const q=(searchStorageQuery.value||'').trim();
+  const topK=Math.max(1,Number(searchStorageTopK.value||'10'));
+  if(!storageId){searchOut.textContent='Select storage.';return;}
+  const body={query:q,topK,filters:{storageId}};
+  const res=await fetch('/api/knowledge/search',{method:'POST',headers:headers(),body:JSON.stringify(body)});
+  const txt=await res.text();
+  try{searchOut.textContent=JSON.stringify(JSON.parse(txt),null,2)}catch(e){searchOut.textContent=txt}
+}
 
 function storagePageParams(){const p=Math.max(1,Number(storageItemsPage.value||'1'));const ps=Math.max(1,Math.min(200,Number(storageItemsPageSize.value||'20')));return {page:p,pageSize:ps}}
 function prevStoragePage(){storageItemsPage.value=String(Math.max(1,Number(storageItemsPage.value||'1')-1));loadStorageDetails()}
