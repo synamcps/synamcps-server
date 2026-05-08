@@ -11,10 +11,10 @@ import (
 )
 
 func NewRouter(gateway *auth.Gateway, sessions *session.Store, service *knowledge.Service, allowPartial bool) http.Handler {
-	return NewRouterWithAdmin(gateway, sessions, service, nil, nil, "", allowPartial)
+	return NewRouterWithAdmin(gateway, sessions, service, nil, nil, "", allowPartial, nil)
 }
 
-func NewRouterWithAdmin(gateway *auth.Gateway, sessions *session.Store, service *knowledge.Service, accessService *access.Service, usageService *usage.Service, s3Bucket string, allowPartial bool) http.Handler {
+func NewRouterWithAdmin(gateway *auth.Gateway, sessions *session.Store, service *knowledge.Service, accessService *access.Service, usageService *usage.Service, s3Bucket string, allowPartial bool, statusHandler *StatusHandler) http.Handler {
 	mux := http.NewServeMux()
 	authResolver := NewAuthResolver(gateway, sessions)
 	handler := NewKnowledgeHandler(service, allowPartial)
@@ -22,6 +22,9 @@ func NewRouterWithAdmin(gateway *auth.Gateway, sessions *session.Store, service 
 	if accessService != nil {
 		admin := NewAdminHandler(accessService, usageService, s3Bucket)
 		mux.Handle("/api/admin/", authResolver.Middleware(admin))
+		if statusHandler != nil {
+			mux.Handle("GET /api/admin/status", authResolver.Middleware(statusHandler))
+		}
 	}
 	ingestHandler := NewIngestHandler(service)
 	mux.Handle("GET /api/knowledge", authResolver.Middleware(http.HandlerFunc(handler.List)))

@@ -193,6 +193,7 @@ pre{background:#020617;padding:12px;border-radius:8px;overflow:auto}
 </div>
 <nav>
 <button onclick="showTab('dashboard')">Dashboard</button>
+<button onclick="showTab('status')">Status</button>
 <button onclick="showTab('users')">Users</button>
 <button onclick="showTab('groups')">Groups</button>
 <button onclick="showTab('storages')">Storages</button>
@@ -208,6 +209,11 @@ pre{background:#020617;padding:12px;border-radius:8px;overflow:auto}
 <label>Bearer token <input id="token" style="width:520px" placeholder="JWT or Synamcps token"/></label>
 
 <section id="dashboard" class="active"><h2>Dashboard</h2><button onclick="loadAll()">Refresh</button><div id="dashboardOut" class="card"></div></section>
+
+<section id="status"><h2>Status</h2>
+<button onclick="loadStatus()">Refresh status</button>
+<div id="statusOut" class="card">Loading...</div>
+</section>
 
 <section id="users"><h2>Users</h2>
 <input id="userEmail" placeholder="email"/>
@@ -351,7 +357,22 @@ async function connectConfig(){const id=connectTokenId.value;const data=await ap
 async function loadUsage(){const data=await api('/api/admin/usage/series?groupBy='+usageGroup.value);usageOut.textContent=JSON.stringify(data,null,2);drawUsage(data)}
 function drawUsage(series){const c=usageChart,ctx=c.getContext('2d');ctx.clearRect(0,0,c.width,c.height);ctx.fillStyle='#e2e8f0';ctx.fillText('Usage by '+usageGroup.value,20,24);const vals=(series||[]).map(s=>s.points?.[0]?.value||0);const max=Math.max(1,...vals);(series||[]).forEach((s,i)=>{const v=s.points?.[0]?.value||0;const x=20+i*80;const h=Math.round((v/max)*180);ctx.fillStyle='#38bdf8';ctx.fillRect(x,230-h,48,h);ctx.fillStyle='#e2e8f0';ctx.fillText(String(v),x,224-h);ctx.fillText(Object.values(s.labels||{})[0]||'',x,250)})}
 async function loadCurrentUser(){const me=await api('/api/admin/me');if(me&&me.id){currentUserLink.textContent=me.email||me.displayName||me.externalSubject||me.id}}
-async function loadAll(){await Promise.all([loadCurrentUser(),loadUsers(),loadGroups(),loadStorages(),loadTokens(),loadUsage()]);dashboardOut.textContent='Loaded users, groups, storages, tokens and usage.'}
+async function loadStatus(){
+  const res=await fetch('/api/admin/status',{headers:headers()});
+  const txt=await res.text();
+  let data=null; try{data=JSON.parse(txt)}catch(e){}
+  if(!data){statusOut.textContent=txt;return;}
+  const rows=(data.components||[]).map(c=>{
+    const badge='<span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:'+(
+      c.color==='green'?'#22c55e':(c.color==='yellow'?'#eab308':'#ef4444')
+    )+';margin-right:8px"></span>';
+    const title=(c.kind==='llm'?('LLM '+c.role+' · '+(c.model||'')):(c.name));
+    const msg=c.available?'ok':(c.message||'not available');
+    return {component:badge+escapeHtml(title),available:String(!!c.available),errors:String(c.errorCount||0),message:escapeHtml(msg)};
+  });
+  statusOut.innerHTML=renderRows(rows,_=>'');
+}
+async function loadAll(){await Promise.all([loadCurrentUser(),loadStatus(),loadUsers(),loadGroups(),loadStorages(),loadTokens(),loadUsage()]);dashboardOut.textContent='Loaded status, users, groups, storages, tokens and usage.'}
 loadAll();
 
 function storagePageParams(){const p=Math.max(1,Number(storageItemsPage.value||'1'));const ps=Math.max(1,Math.min(200,Number(storageItemsPageSize.value||'20')));return {page:p,pageSize:ps}}

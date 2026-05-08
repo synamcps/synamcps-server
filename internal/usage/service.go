@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -24,6 +25,70 @@ type Service struct {
 	mu        sync.RWMutex
 	counters  map[string]int64
 	events    []models.UsageEvent
+}
+
+func (s *Service) RecordStatusError(ctx context.Context, component string) {
+	if component == "" {
+		component = "unknown"
+	}
+	if s.redis == nil {
+		s.mu.Lock()
+		s.counters[counterKey("syna_status_errors_total", map[string]string{"component": component})]++
+		s.mu.Unlock()
+		return
+	}
+	ts := time.Now().UTC().UnixMilli()
+	_ = s.redis.Do(ctx, "TS.ADD", s.key("ts:status:errors:"+component), ts, 1, "RETENTION", int64(s.retention/time.Millisecond), "ON_DUPLICATE", "SUM").Err()
+}
+
+func (s *Service) StatusErrorCount(ctx context.Context, component string, window time.Duration) int64 {
+	if component == "" {
+		component = "unknown"
+	}
+	if window <= 0 {
+		window = 15 * time.Minute
+	}
+	if s.redis == nil {
+		// best-effort: return cumulative counter when redis is disabled
+		s.mu.RLock()
+		defer s.mu.RUnlock()
+		return s.counters[counterKey("syna_status_errors_total", map[string]string{"component": component})]
+	}
+	from := time.Now().UTC().Add(-window).UnixMilli()
+	to := time.Now().UTC().UnixMilli()
+	// Aggregate into a single bucket.
+	res, err := s.redis.Do(ctx, "TS.RANGE", s.key("ts:status:errors:"+component), from, to, "AGGREGATION", "SUM", int64(window/time.Millisecond)).Result()
+	if err != nil {
+		return 0
+	}
+	// Expected: [[ts value]] where value is string or float/int
+	arr, ok := res.([]any)
+	if !ok || len(arr) == 0 {
+		return 0
+	}
+	var sum int64
+	for _, it := range arr {
+		pair, ok := it.([]any)
+		if !ok || len(pair) < 2 {
+			continue
+		}
+		switch v := pair[1].(type) {
+		case int64:
+			sum += v
+		case float64:
+			sum += int64(v)
+		case string:
+			// redis returns numbers as strings
+			if n, err := strconv.ParseFloat(v, 64); err == nil {
+				sum += int64(n)
+			}
+		case []byte:
+			if n, err := strconv.ParseFloat(string(v), 64); err == nil {
+				sum += int64(n)
+			}
+		}
+	}
+	return sum
 }
 
 func (s *Service) StartVictoriaMetricsExporter(ctx context.Context, remoteWriteURL string, interval time.Duration) {
