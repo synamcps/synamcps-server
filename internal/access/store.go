@@ -151,6 +151,15 @@ CREATE TABLE IF NOT EXISTS access_token_storages (
   created_at TIMESTAMPTZ NOT NULL,
   PRIMARY KEY (token_id, storage_id)
 );
+CREATE TABLE IF NOT EXISTS access_token_mcp_servers (
+  token_id TEXT NOT NULL,
+  server_id TEXT NOT NULL,
+  tool_allowlist TEXT[] NOT NULL DEFAULT '{}',
+  resource_allowlist TEXT[] NOT NULL DEFAULT '{}',
+  prompt_allowlist TEXT[] NOT NULL DEFAULT '{}',
+  created_at TIMESTAMPTZ NOT NULL,
+  PRIMARY KEY (token_id, server_id)
+);
 CREATE TABLE IF NOT EXISTS audit_events (
   id TEXT PRIMARY KEY,
   actor_subject_key TEXT NOT NULL,
@@ -1046,7 +1055,7 @@ func (s *Store) RevokeToken(ctx context.Context, tokenID string) error {
 
 func (s *Store) DeleteToken(ctx context.Context, tokenID string) error {
 	if s.useDB {
-		_, err := s.pool.Exec(ctx, `DELETE FROM access_token_storages WHERE token_id=$1; DELETE FROM access_tokens WHERE id=$1`, tokenID)
+		_, err := s.pool.Exec(ctx, `DELETE FROM access_token_mcp_servers WHERE token_id=$1; DELETE FROM access_token_storages WHERE token_id=$1; DELETE FROM access_tokens WHERE id=$1`, tokenID)
 		return err
 	}
 	s.mu.Lock()

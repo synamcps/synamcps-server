@@ -10,16 +10,19 @@ import (
 	"github.com/zmiishe/synamcps/internal/access"
 	"github.com/zmiishe/synamcps/internal/auth"
 	"github.com/zmiishe/synamcps/internal/knowledge"
+	"github.com/zmiishe/synamcps/internal/mcpproxy"
 	"github.com/zmiishe/synamcps/internal/models"
 	"github.com/zmiishe/synamcps/internal/session"
 	"github.com/zmiishe/synamcps/internal/usage"
 )
 
 type Server struct {
-	sessions *session.Store
+	sessions  *session.Store
 	knowledge *knowledge.Service
 	access    *access.Service
 	usage     *usage.Service
+	proxy     *mcpproxy.Manager
+	mcpAccess *mcpproxy.AccessService
 }
 
 func NewServer(sessions *session.Store, knowledgeService *knowledge.Service) *Server {
@@ -34,6 +37,11 @@ func (s *Server) AttachUsage(usageService *usage.Service) {
 	s.usage = usageService
 }
 
+func (s *Server) AttachProxy(proxy *mcpproxy.Manager, mcpAccess *mcpproxy.AccessService) {
+	s.proxy = proxy
+	s.mcpAccess = mcpAccess
+}
+
 func (s *Server) HandleInitialize(w http.ResponseWriter, p models.Principal) {
 	sess := s.sessions.CreateMCPSession(p, 12*time.Hour)
 	w.Header().Set("Mcp-Session-Id", sess.SessionID)
@@ -41,7 +49,7 @@ func (s *Server) HandleInitialize(w http.ResponseWriter, p models.Principal) {
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"jsonrpc": "2.0",
 		"id":      "init",
-		"result": initializeResult("2024-11-05", sess.SessionID),
+		"result":  s.initializeResult(context.Background(), p, models.APIAccessContext{}, "2024-11-05", sess.SessionID),
 	})
 }
 
@@ -49,6 +57,9 @@ func (s *Server) HandleJSONRPC(ctx context.Context, p models.Principal, request 
 	start := time.Now()
 	method, _ := request["method"].(string)
 	params, _ := request["params"].(map[string]any)
+	if params == nil {
+		params = map[string]any{}
+	}
 	id := request["id"]
 	storageID := asString(params["storageId"])
 	accessCtx, _ := auth.AccessContextFromContext(ctx)
@@ -89,7 +100,7 @@ func (s *Server) HandleJSONRPC(ctx context.Context, p models.Principal, request 
 		return map[string]any{
 			"jsonrpc": "2.0",
 			"id":      id,
-			"result":  initializeResult(protocolVersion, sess.SessionID),
+			"result":  s.initializeResult(ctx, p, accessCtx, protocolVersion, sess.SessionID),
 		}, nil
 	case "notifications/initialized":
 		return map[string]any{"jsonrpc": "2.0", "id": id, "result": map[string]any{}}, nil
@@ -101,12 +112,25 @@ func (s *Server) HandleJSONRPC(ctx context.Context, p models.Principal, request 
 		}
 		return map[string]any{"jsonrpc": "2.0", "id": id, "result": result}, nil
 	case "tools/call":
-		name := asString(params["name"])
-		name = methodForToolName(name)
+		originalName := asString(params["name"])
 		arguments, _ := params["arguments"].(map[string]any)
 		if arguments == nil {
 			arguments = map[string]any{}
 		}
+		if s.proxy != nil && s.proxy.Enabled() && s.proxy.HasProxiedTool(originalName) {
+			servers, err := s.accessibleMCPServers(ctx, p, accessCtx)
+			if err != nil {
+				status = statusFromError(err)
+				return nil, err
+			}
+			result, err := s.proxy.CallTool(ctx, originalName, arguments, servers)
+			if err != nil {
+				status = statusFromError(err)
+				return nil, err
+			}
+			return toolCallResponse(id, result), nil
+		}
+		name := methodForToolName(originalName)
 		callReq := map[string]any{
 			"jsonrpc": "2.0",
 			"id":      id,
@@ -119,6 +143,55 @@ func (s *Server) HandleJSONRPC(ctx context.Context, p models.Principal, request 
 			return nil, err
 		}
 		return toolCallResponse(id, resp["result"]), nil
+	case "resources/list":
+		result, err := s.handleResourcesList(ctx, p, accessCtx)
+		if err != nil {
+			status = "error"
+			return nil, err
+		}
+		return map[string]any{"jsonrpc": "2.0", "id": id, "result": result}, nil
+	case "resources/read":
+		uri := asString(params["uri"])
+		servers, err := s.accessibleMCPServers(ctx, p, accessCtx)
+		if err != nil {
+			status = statusFromError(err)
+			return nil, err
+		}
+		if s.proxy == nil || !s.proxy.Enabled() {
+			status = "error"
+			return nil, errors.New("unknown method")
+		}
+		result, err := s.proxy.ReadResource(ctx, uri, servers)
+		if err != nil {
+			status = statusFromError(err)
+			return nil, err
+		}
+		return map[string]any{"jsonrpc": "2.0", "id": id, "result": result}, nil
+	case "prompts/list":
+		result, err := s.handlePromptsList(ctx, p, accessCtx)
+		if err != nil {
+			status = "error"
+			return nil, err
+		}
+		return map[string]any{"jsonrpc": "2.0", "id": id, "result": result}, nil
+	case "prompts/get":
+		name := asString(params["name"])
+		arguments, _ := params["arguments"].(map[string]any)
+		servers, err := s.accessibleMCPServers(ctx, p, accessCtx)
+		if err != nil {
+			status = statusFromError(err)
+			return nil, err
+		}
+		if s.proxy == nil || !s.proxy.Enabled() {
+			status = "error"
+			return nil, errors.New("unknown method")
+		}
+		result, err := s.proxy.GetPrompt(ctx, name, arguments, servers)
+		if err != nil {
+			status = statusFromError(err)
+			return nil, err
+		}
+		return map[string]any{"jsonrpc": "2.0", "id": id, "result": result}, nil
 	case "knowledge.save":
 		in := knowledge.SaveInput{
 			StorageID:  storageID,
@@ -174,6 +247,24 @@ func (s *Server) HandleJSONRPC(ctx context.Context, p models.Principal, request 
 	}
 }
 
+func (s *Server) accessibleMCPServers(ctx context.Context, p models.Principal, accessCtx models.APIAccessContext) ([]mcpproxy.AccessibleServer, error) {
+	if s.mcpAccess == nil {
+		return nil, nil
+	}
+	return s.mcpAccess.AvailableMCPServers(ctx, p, accessCtx.AccessToken, accessCtx.AllowedMCPServers)
+}
+
+func (s *Server) exposedProxy(ctx context.Context, p models.Principal, accessCtx models.APIAccessContext) (mcpproxy.ExposedCapabilities, error) {
+	if s.proxy == nil || !s.proxy.Enabled() {
+		return mcpproxy.ExposedCapabilities{}, nil
+	}
+	servers, err := s.accessibleMCPServers(ctx, p, accessCtx)
+	if err != nil {
+		return mcpproxy.ExposedCapabilities{}, err
+	}
+	return s.proxy.ExposedForAccess(ctx, servers)
+}
+
 func toolCallResponse(id any, result any) map[string]any {
 	raw, err := json.MarshalIndent(result, "", "  ")
 	if err != nil {
@@ -193,27 +284,71 @@ func toolCallResponse(id any, result any) map[string]any {
 	}
 }
 
-func initializeResult(protocolVersion, sessionID string) map[string]any {
+func (s *Server) initializeResult(ctx context.Context, p models.Principal, accessCtx models.APIAccessContext, protocolVersion, sessionID string) map[string]any {
+	caps := map[string]any{
+		"tools": map[string]any{},
+	}
+	exposed, _ := s.exposedProxy(ctx, p, accessCtx)
+	if s.proxy != nil {
+		for k, v := range s.proxy.CapabilityFlags(exposed) {
+			caps[k] = v
+		}
+	}
+	knowledgeTools, _, _ := s.buildKnowledgeTools(ctx, p, accessCtx)
+	if len(knowledgeTools) > 0 {
+		caps["tools"] = map[string]any{}
+	}
 	return map[string]any{
 		"protocolVersion": protocolVersion,
-		"capabilities": map[string]any{
-			"tools": map[string]any{},
-		},
+		"capabilities":    caps,
 		"serverInfo": map[string]any{
 			"name":    "syna-knowledge-mcp",
-			"version": "0.1.0",
+			"version": "0.2.0",
 		},
 		"sessionId": sessionID,
 	}
 }
 
 func (s *Server) handleToolsList(ctx context.Context, p models.Principal, accessCtx models.APIAccessContext) (map[string]any, error) {
+	tools, storages, err := s.buildKnowledgeTools(ctx, p, accessCtx)
+	if err != nil {
+		return nil, err
+	}
+	exposed, err := s.exposedProxy(ctx, p, accessCtx)
+	if err != nil {
+		return nil, err
+	}
+	tools = append(tools, exposed.Tools...)
+	result := map[string]any{"tools": tools}
+	if len(storages) > 0 {
+		result["storages"] = storages
+	}
+	return result, nil
+}
+
+func (s *Server) handleResourcesList(ctx context.Context, p models.Principal, accessCtx models.APIAccessContext) (map[string]any, error) {
+	exposed, err := s.exposedProxy(ctx, p, accessCtx)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"resources": exposed.Resources}, nil
+}
+
+func (s *Server) handlePromptsList(ctx context.Context, p models.Principal, accessCtx models.APIAccessContext) (map[string]any, error) {
+	exposed, err := s.exposedProxy(ctx, p, accessCtx)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"prompts": exposed.Prompts}, nil
+}
+
+func (s *Server) buildKnowledgeTools(ctx context.Context, p models.Principal, accessCtx models.APIAccessContext) ([]map[string]any, []models.Storage, error) {
 	if s.access == nil {
-		return map[string]any{"tools": defaultTools(nil, true)}, nil
+		return defaultTools(nil, true), nil, nil
 	}
 	storages, effective, err := s.access.AvailableStorages(ctx, p, accessCtx.AccessToken, accessCtx.AllowedStorage)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	storageEnums := make([]string, 0, len(storages))
 	writeAllowed := false
@@ -225,10 +360,36 @@ func (s *Server) handleToolsList(ctx context.Context, p models.Principal, access
 			}
 		}
 	}
-	return map[string]any{
-		"tools":    defaultTools(storageEnums, writeAllowed),
-		"storages": storages,
-	}, nil
+	tools := defaultTools(storageEnums, writeAllowed)
+	return filterKnowledgeTools(tools, accessCtx.AllowedStorage), storages, nil
+}
+
+func filterKnowledgeTools(tools []map[string]any, scopes []models.AccessTokenStorage) []map[string]any {
+	if len(scopes) == 0 {
+		return tools
+	}
+	out := make([]map[string]any, 0, len(tools))
+	for _, tool := range tools {
+		name, _ := tool["name"].(string)
+		if knowledgeToolAllowed(name, scopes) {
+			out = append(out, tool)
+		}
+	}
+	return out
+}
+
+func knowledgeToolAllowed(name string, scopes []models.AccessTokenStorage) bool {
+	for _, scope := range scopes {
+		if len(scope.ToolAllowlist) == 0 {
+			return true
+		}
+		for _, allowed := range scope.ToolAllowlist {
+			if allowed == name {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func defaultTools(storageEnums []string, writeAllowed bool) []map[string]any {
@@ -288,7 +449,7 @@ func operationForMethod(method string) string {
 		return "write"
 	case "knowledge.delete":
 		return "delete"
-	case "tools/list":
+	case "tools/list", "resources/list", "prompts/list":
 		return "tools_list"
 	case "initialize":
 		return "initialize"

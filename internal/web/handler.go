@@ -201,6 +201,7 @@ pre{background:#020617;padding:12px;border-radius:8px;overflow:auto}
 <button onclick="showTab('storage')">Storage</button>
 <button onclick="showTab('addItem')">Add item</button>
 <button onclick="showTab('tokens')">Tokens</button>
+<button onclick="showTab('mcpServers')">MCP Servers</button>
 <button onclick="showTab('usage')">Usage</button>
 <button onclick="showTab('connect')">MCP Connect</button>
 </nav>
@@ -341,9 +342,43 @@ pre{background:#020617;padding:12px;border-radius:8px;overflow:auto}
 <input id="tokenName" placeholder="token name"/><input id="tokenStorageIds" placeholder="storage ids, comma-separated"/>
 <select id="tokenMode"><option value="read">read</option><option value="read_write">read_write</option></select>
 <input id="tokenRpm" placeholder="rpm" size="5"/><input id="tokenRph" placeholder="rph" size="5"/><input id="tokenRpd" placeholder="rpd" size="5"/>
+<label>MCP scopes JSON <input id="tokenMcpScopesJson" placeholder='[{"serverId":"...","toolAllowlist":[]}]' style="width:520px"/></label>
 <button onclick="createToken()">Create token</button>
+<div class="card"><b>Edit token MCP scopes</b><br/>
+<input id="tokenMcpScopesTokenId" placeholder="token id" style="width:420px"/>
+<button onclick="saveTokenMcpScopes()">Save MCP scopes</button>
+</div>
 <div id="rawTokenBox" class="card" style="display:none"><b>Raw token is shown once:</b><pre id="rawToken"></pre></div>
 <div id="tokensOut"></div></section>
+
+<section id="mcpServers"><h2>MCP Servers (proxy)</h2>
+<div class="card">
+<input id="mcpSlug" placeholder="slug"/>
+<input id="mcpName" placeholder="name"/>
+<input id="mcpUrl" placeholder="upstream URL" style="width:420px"/>
+<select id="mcpTransport"><option value="auto">auto</option><option value="http">http</option><option value="sse">sse</option></select>
+<select id="mcpAuthType"><option value="bearer">bearer</option><option value="api_key">api_key</option><option value="custom_header">custom_header</option></select>
+<input id="mcpAuthHeader" placeholder="auth header name (optional)"/>
+<input id="mcpAuthSecret" type="password" placeholder="auth secret"/>
+<input id="mcpHeadersJson" placeholder='headers JSON {"X-Custom":"v"}' style="width:420px"/>
+<button onclick="createMcpServer()">Create MCP server</button>
+</div>
+<div id="mcpServersOut"></div>
+</section>
+
+<section id="mcpServerDetail"><h2>MCP Server</h2>
+<div class="card">
+<input id="currentMcpServerId" placeholder="server id" style="width:420px"/>
+<button onclick="loadMcpServerDetails()">Load</button>
+<button onclick="connectTestMcpServer()">Test connection</button>
+</div>
+<div class="card"><b>Server</b><pre id="mcpServerInfoOut"></pre></div>
+<div class="card"><b>Discovered capabilities</b>
+<div id="mcpCapabilitiesBox" class="muted">Run Test connection to discover tools/resources/prompts.</div>
+<button onclick="saveMcpCapabilities()">Save enabled capabilities</button>
+</div>
+<pre id="mcpServerDetailOut"></pre>
+</section>
 
 <section id="usage"><h2>Usage</h2>
 <select id="usageGroup"><option value="storage">storage</option><option value="token">token</option><option value="user">user</option><option value="tool">tool</option><option value="status">status</option></select>
@@ -454,7 +489,16 @@ async function loadStorages(){const data=await api('/api/admin/storages');window
 async function createStorage(){await api('/api/admin/storages',{method:'POST',body:JSON.stringify({slug:storageSlug.value,name:storageName.value,visibility:storageVisibility.value})});loadStorages()}
 async function deleteStorage(id){if(confirm('Delete storage '+id+'?')){await api('/api/admin/storages/'+id,{method:'DELETE'});loadStorages()}}
 async function loadTokens(){const data=await api('/api/admin/tokens');window.tokens=data;document.getElementById('tokensOut').innerHTML=renderRows(data,r=>actionButton('Connect',"connectTokenId.value='"+r.id+"';showTab('connect')")+actionButton('Delete',"deleteToken('"+r.id+"')"));fillSearchTokenSelect()}
-async function createToken(){const storageIds=tokenStorageIds.value.split(',').map(s=>s.trim()).filter(Boolean);const body={name:tokenName.value,mode:tokenMode.value,storageIds,rateLimit:{enabled:true,requestsPerMinute:Number(tokenRpm.value||0),requestsPerHour:Number(tokenRph.value||0),requestsPerDay:Number(tokenRpd.value||0)}};const data=await api('/api/admin/tokens',{method:'POST',body:JSON.stringify(body)});if(data.rawToken){rawTokenBox.style.display='block';rawToken.textContent=data.rawToken;connectRawToken.value=data.rawToken;if(data.token)connectTokenId.value=data.token.id}loadTokens()}
+async function createToken(){const storageIds=tokenStorageIds.value.split(',').map(s=>s.trim()).filter(Boolean);const body={name:tokenName.value,mode:tokenMode.value,storageIds,rateLimit:{enabled:true,requestsPerMinute:Number(tokenRpm.value||0),requestsPerHour:Number(tokenRph.value||0),requestsPerDay:Number(tokenRpd.value||0)}};if(tokenMcpScopesJson.value.trim()){try{body.mcpServers=JSON.parse(tokenMcpScopesJson.value)}catch(e){alert('Invalid MCP scopes JSON');return}}const data=await api('/api/admin/tokens',{method:'POST',body:JSON.stringify(body)});if(data.rawToken){rawTokenBox.style.display='block';rawToken.textContent=data.rawToken;connectRawToken.value=data.rawToken;if(data.token)connectTokenId.value=data.token.id}loadTokens()}
+async function saveTokenMcpScopes(){const id=tokenMcpScopesTokenId.value.trim();if(!id){alert('token id required');return}let mcpServers=[];if(tokenMcpScopesJson.value.trim()){try{mcpServers=JSON.parse(tokenMcpScopesJson.value)}catch(e){alert('Invalid MCP scopes JSON');return}}const data=await api('/api/admin/tokens/'+encodeURIComponent(id)+'/mcp-scopes',{method:'PATCH',body:JSON.stringify({mcpServers})});alert(JSON.stringify(data,null,2))}
+async function loadMcpServers(){const data=await api('/api/admin/mcp-servers');window.mcpServers=data;document.getElementById('mcpServersOut').innerHTML=renderRows(data,r=>actionButton('Open',"openMcpServer('"+r.id+"')")+actionButton('Delete',"deleteMcpServer('"+r.id+"')"))}
+async function createMcpServer(){const body={slug:mcpSlug.value,name:mcpName.value,url:mcpUrl.value,transport:mcpTransport.value,authType:mcpAuthType.value,authHeaderName:mcpAuthHeader.value,authSecret:mcpAuthSecret.value,headersJson:mcpHeadersJson.value||'{}'};const data=await api('/api/admin/mcp-servers',{method:'POST',body:JSON.stringify(body)});mcpServerDetailOut.textContent=JSON.stringify(data,null,2);if(data.id){openMcpServer(data.id)}loadMcpServers()}
+function openMcpServer(id){currentMcpServerId.value=id;showTab('mcpServerDetail');loadMcpServerDetails()}
+async function deleteMcpServer(id){if(confirm('Delete MCP server '+id+'?')){await api('/api/admin/mcp-servers/'+id,{method:'DELETE'});loadMcpServers()}}
+async function loadMcpServerDetails(){const id=(currentMcpServerId.value||'').trim();if(!id)return;const data=await api('/api/admin/mcp-servers/'+encodeURIComponent(id));mcpServerInfoOut.textContent=JSON.stringify(data.server||data,null,2);renderMcpCapabilities(data)}
+async function connectTestMcpServer(){const id=(currentMcpServerId.value||'').trim();if(!id)return;mcpCapabilitiesBox.textContent='Connecting...';const data=await api('/api/admin/mcp-servers/'+encodeURIComponent(id)+'/connect-test',{method:'POST',body:'{}'});renderMcpCapabilities(data);mcpServerDetailOut.textContent=JSON.stringify(data,null,2);loadMcpServers()}
+function renderMcpCapabilities(data){const box=document.getElementById('mcpCapabilitiesBox');if(!data||!data.tools){box.textContent='No data';return}const slug=(data.server&&data.server.slug)||'';let html='';const section=(title,items,prefix,field,labelFn)=>{html+='<div style="margin-top:10px"><b>'+title+'</b><br/>';(items||[]).forEach(it=>{const val=it[field]||'';const label=labelFn?labelFn(it,slug):val;html+='<label><input type="checkbox" class="mcp-cap" data-kind="'+prefix+'" value="'+escapeHtml(val)+'" '+(it.enabled?'checked':'')+'/> '+escapeHtml(label)+'</label><br/>'});html+='</div>'};section('Tools',data.tools,'tool','toolName',(it,s)=>s+'__'+(it.toolName||''));section('Resources',data.resources,'res','uri',(it,s)=>'syna-mcp/'+s+'/'+(it.uri||''));section('Prompts',data.prompts,'prompt','promptName',(it,s)=>s+'__'+(it.promptName||''));box.innerHTML=html}
+async function saveMcpCapabilities(){const id=(currentMcpServerId.value||'').trim();if(!id)return;const enabledTools=[],enabledResources=[],enabledPrompts=[];document.querySelectorAll('.mcp-cap:checked').forEach(el=>{if(el.dataset.kind==='tool')enabledTools.push(el.value);if(el.dataset.kind==='res')enabledResources.push(el.value);if(el.dataset.kind==='prompt')enabledPrompts.push(el.value)});const data=await api('/api/admin/mcp-servers/'+encodeURIComponent(id)+'/capabilities',{method:'PUT',body:JSON.stringify({enabledTools,enabledResources,enabledPrompts})});mcpServerDetailOut.textContent=JSON.stringify(data,null,2);renderMcpCapabilities(data)}
 async function deleteToken(id){if(confirm('Delete token '+id+'?')){await api('/api/admin/tokens/'+id,{method:'DELETE'});loadTokens()}}
 let lastConnectBody='';
 async function connectConfig(){
@@ -523,7 +567,7 @@ async function loadStatus(){
   });
   statusOut.innerHTML=renderRows(rows,_=>'');
 }
-async function loadAll(){await Promise.all([loadCurrentUser(),loadStatus(),loadUsers(),loadGroups(),loadStorages(),loadTokens(),loadUsage()]);dashboardOut.textContent='Loaded status, users, groups, storages, tokens and usage.'}
+async function loadAll(){await Promise.all([loadCurrentUser(),loadStatus(),loadUsers(),loadGroups(),loadStorages(),loadTokens(),loadMcpServers(),loadUsage()]);dashboardOut.textContent='Loaded status, users, groups, storages, tokens, mcp servers and usage.'}
 loadAll();
 
 function showSearchTab(which){

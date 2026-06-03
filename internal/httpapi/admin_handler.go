@@ -8,18 +8,28 @@ import (
 	"time"
 
 	"github.com/zmiishe/synamcps/internal/access"
+	"github.com/zmiishe/synamcps/internal/mcpproxy"
 	"github.com/zmiishe/synamcps/internal/models"
 	"github.com/zmiishe/synamcps/internal/usage"
 )
 
 type AdminHandler struct {
-	access *access.Service
-	usage  *usage.Service
-	s3Bucket string
+	access     *access.Service
+	usage      *usage.Service
+	s3Bucket   string
+	mcpStore   *mcpproxy.Store
+	mcpManager *mcpproxy.Manager
+	mcpAccess  *mcpproxy.AccessService
 }
 
 func NewAdminHandler(accessService *access.Service, usageService *usage.Service, s3Bucket string) *AdminHandler {
 	return &AdminHandler{access: accessService, usage: usageService, s3Bucket: s3Bucket}
+}
+
+func (h *AdminHandler) AttachMCP(store *mcpproxy.Store, manager *mcpproxy.Manager, mcpAccess *mcpproxy.AccessService) {
+	h.mcpStore = store
+	h.mcpManager = manager
+	h.mcpAccess = mcpAccess
 }
 
 func (h *AdminHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -99,7 +109,7 @@ func (h *AdminHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.listTokens(w, r, p)
 	case r.Method == http.MethodPost && path == "/tokens":
 		h.createToken(w, r, p)
-	case r.Method == http.MethodDelete && strings.HasPrefix(path, "/tokens/") && !strings.Contains(path, "/connect-options"):
+	case r.Method == http.MethodDelete && strings.HasPrefix(path, "/tokens/") && !strings.Contains(path, "/connect-options") && !strings.Contains(path, "/mcp-scopes") && !strings.Contains(path, "/rate-limit") && !strings.Contains(path, "/revoke") && !strings.Contains(path, "/rotate"):
 		h.deleteToken(w, r, path)
 	case r.Method == http.MethodPatch && strings.HasSuffix(path, "/rate-limit"):
 		h.patchRateLimit(w, r, path)
@@ -117,6 +127,10 @@ func (h *AdminHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.usageSummary(w, r)
 	case r.Method == http.MethodGet && strings.Contains(path, "/usage"):
 		h.usageSeries(w, r)
+	case strings.HasPrefix(path, "/mcp-servers"):
+		h.handleMCPServers(w, r, path, p)
+	case r.Method == http.MethodPatch && strings.HasSuffix(path, "/mcp-scopes"):
+		h.patchTokenMCPScopes(w, r, strings.TrimSuffix(strings.TrimPrefix(path, "/tokens/"), "/mcp-scopes"), p)
 	default:
 		http.NotFound(w, r)
 	}
@@ -457,6 +471,7 @@ type createTokenRequest struct {
 	Name       string                 `json:"name"`
 	Mode       models.AccessMode      `json:"mode"`
 	StorageIDs []string               `json:"storageIds"`
+	MCPServers []models.AccessTokenMCPServer `json:"mcpServers"`
 	RateLimit  models.RateLimitPolicy `json:"rateLimit"`
 	ExpiresAt  *time.Time             `json:"expiresAt,omitempty"`
 }
@@ -495,11 +510,21 @@ func (h *AdminHandler) createToken(w http.ResponseWriter, r *http.Request, p mod
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	if h.mcpStore != nil && len(req.MCPServers) > 0 {
+		for i := range req.MCPServers {
+			req.MCPServers[i].TokenID = token.ID
+		}
+		_ = h.mcpStore.SaveTokenMCPServers(r.Context(), token.ID, req.MCPServers)
+	}
 	writeJSON(w, map[string]any{"token": token, "rawToken": raw}, http.StatusCreated)
 }
 
 func (h *AdminHandler) deleteToken(w http.ResponseWriter, r *http.Request, path string) {
-	if err := h.access.Store().DeleteToken(r.Context(), idFromPath(path, 1)); err != nil {
+	tokenID := idFromPath(path, 1)
+	if h.mcpStore != nil {
+		_ = h.mcpStore.ReplaceTokenMCPServers(r.Context(), tokenID, nil)
+	}
+	if err := h.access.Store().DeleteToken(r.Context(), tokenID); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -530,6 +555,10 @@ func (h *AdminHandler) revokeToken(w http.ResponseWriter, r *http.Request, path 
 func (h *AdminHandler) rotateToken(w http.ResponseWriter, r *http.Request, path string, p models.Principal) {
 	oldID := tokenIDFromPath(path)
 	scopes, _ := h.access.Store().TokenStorages(r.Context(), oldID)
+	var mcpScopes []models.AccessTokenMCPServer
+	if h.mcpStore != nil {
+		mcpScopes, _ = h.mcpStore.TokenMCPServers(r.Context(), oldID)
+	}
 	_ = h.access.Store().RevokeToken(r.Context(), oldID)
 	token, raw, err := h.access.Store().CreateToken(r.Context(), access.CreateTokenInput{
 		OwnerSubjectKey: models.SubjectKeyForPrincipal(p),
@@ -541,6 +570,12 @@ func (h *AdminHandler) rotateToken(w http.ResponseWriter, r *http.Request, path 
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
+	}
+	if h.mcpStore != nil && len(mcpScopes) > 0 {
+		for i := range mcpScopes {
+			mcpScopes[i].TokenID = token.ID
+		}
+		_ = h.mcpStore.SaveTokenMCPServers(r.Context(), token.ID, mcpScopes)
 	}
 	writeJSON(w, map[string]any{"token": token, "rawToken": raw}, http.StatusCreated)
 }

@@ -11,12 +11,21 @@ import (
 	"github.com/zmiishe/synamcps/internal/models"
 )
 
+type MCPScopeLoader interface {
+	TokenMCPServers(ctx context.Context, tokenID string) ([]models.AccessTokenMCPServer, error)
+}
+
 type Service struct {
-	store *Store
+	store    *Store
+	mcpStore MCPScopeLoader
 }
 
 func NewService(store *Store) *Service {
 	return &Service{store: store}
+}
+
+func (s *Service) AttachMCPStore(loader MCPScopeLoader) {
+	s.mcpStore = loader
 }
 
 func (s *Service) Store() *Store { return s.store }
@@ -61,13 +70,21 @@ func (s *Service) ResolveBearer(ctx context.Context, raw string) (models.APIAcce
 		AuthSource: "access_token",
 		Scopes:     []string{"mcp.token"},
 	}
-	return models.APIAccessContext{
+	accessCtx := models.APIAccessContext{
 		Principal:      p,
 		AuthMode:       "access_token",
 		TokenID:        token.ID,
 		AccessToken:    &token,
 		AllowedStorage: scopes,
-	}, true, nil
+	}
+	if s.mcpStore != nil {
+		mcpScopes, err := s.mcpStore.TokenMCPServers(ctx, token.ID)
+		if err != nil {
+			return models.APIAccessContext{}, true, err
+		}
+		accessCtx.AllowedMCPServers = mcpScopes
+	}
+	return accessCtx, true, nil
 }
 
 func (s *Service) CanAccessStorage(ctx context.Context, p models.Principal, token *models.AccessToken, tokenScopes []models.AccessTokenStorage, storageID string, permission models.StoragePermission) (models.EffectiveAccess, bool, error) {

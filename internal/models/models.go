@@ -47,12 +47,13 @@ type WebSession struct {
 }
 
 type APIAccessContext struct {
-	Principal     Principal
-	AuthMode      string
-	GrantedScopes []string
-	TokenID       string
-	AccessToken   *AccessToken
-	AllowedStorage []AccessTokenStorage
+	Principal        Principal
+	AuthMode         string
+	GrantedScopes    []string
+	TokenID          string
+	AccessToken      *AccessToken
+	AllowedStorage   []AccessTokenStorage
+	AllowedMCPServers []AccessTokenMCPServer
 }
 
 type SubjectKind string
@@ -154,7 +155,33 @@ const (
 	StorageStatusDeleting StorageStatus = "deleting"
 
 	StorageKindKnowledge StorageKind = "knowledge"
+
+	RoleMCPServerOwner MCPServerRole = "mcp_server_owner"
+	RoleMCPServerAdmin MCPServerRole = "mcp_server_admin"
+	RoleMCPServerUser  MCPServerRole = "mcp_server_user"
+
+	PermissionMCPServerUse    MCPServerPermission = "mcp_server.use"
+	PermissionMCPServerManage MCPServerPermission = "mcp_server.manage"
+	PermissionMCPServerDelete MCPServerPermission = "mcp_server.delete"
+
+	MCPServerStatusActive   MCPServerStatus = "active"
+	MCPServerStatusError    MCPServerStatus = "error"
+	MCPServerStatusDisabled MCPServerStatus = "disabled"
+
+	MCPAuthTypeBearer       MCPAuthType = "bearer"
+	MCPAuthTypeAPIKey       MCPAuthType = "api_key"
+	MCPAuthTypeCustomHeader MCPAuthType = "custom_header"
+
+	MCPTransportHTTP MCPTransportKind = "http"
+	MCPTransportSSE  MCPTransportKind = "sse"
+	MCPTransportAuto MCPTransportKind = "auto"
 )
+
+type MCPServerRole string
+type MCPServerPermission string
+type MCPServerStatus string
+type MCPAuthType string
+type MCPTransportKind string
 
 type User struct {
 	ID              string    `json:"id"`
@@ -246,6 +273,78 @@ type AccessTokenStorage struct {
 	MaxMode       AccessMode `json:"maxMode"`
 	ToolAllowlist []string `json:"toolAllowlist,omitempty"`
 	CreatedAt     time.Time `json:"createdAt"`
+}
+
+type MCPServer struct {
+	ID               string           `json:"id"`
+	Slug             string           `json:"slug"`
+	Name             string           `json:"name"`
+	OwnerSubjectKey  string           `json:"ownerSubjectKey"`
+	Transport        MCPTransportKind `json:"transport"`
+	URL              string           `json:"url"`
+	HeadersJSON      string           `json:"headersJson,omitempty"`
+	AuthType         MCPAuthType      `json:"authType"`
+	AuthHeaderName   string           `json:"authHeaderName,omitempty"`
+	HasAuthSecret    bool             `json:"hasAuthSecret"`
+	Status           MCPServerStatus  `json:"status"`
+	LastConnectedAt  *time.Time       `json:"lastConnectedAt,omitempty"`
+	LastError        string           `json:"lastError,omitempty"`
+	CreatedAt        time.Time        `json:"createdAt"`
+	UpdatedAt        time.Time        `json:"updatedAt"`
+}
+
+type MCPServerACLBinding struct {
+	ID         string        `json:"id"`
+	ServerID   string        `json:"serverId"`
+	SubjectKey string        `json:"subjectKey"`
+	Role       MCPServerRole `json:"role"`
+	GrantedBy  string        `json:"grantedBy,omitempty"`
+	ExpiresAt  *time.Time    `json:"expiresAt,omitempty"`
+	CreatedAt  time.Time     `json:"createdAt"`
+}
+
+type MCPServerTool struct {
+	ServerID        string    `json:"serverId"`
+	ToolName        string    `json:"toolName"`
+	Description     string    `json:"description,omitempty"`
+	InputSchemaJSON string    `json:"inputSchemaJson,omitempty"`
+	Enabled         bool      `json:"enabled"`
+	DiscoveredAt    time.Time `json:"discoveredAt"`
+}
+
+type MCPServerResource struct {
+	ServerID     string    `json:"serverId"`
+	URI          string    `json:"uri"`
+	Name         string    `json:"name,omitempty"`
+	MimeType     string    `json:"mimeType,omitempty"`
+	Description  string    `json:"description,omitempty"`
+	Enabled      bool      `json:"enabled"`
+	DiscoveredAt time.Time `json:"discoveredAt"`
+}
+
+type MCPServerPrompt struct {
+	ServerID            string    `json:"serverId"`
+	PromptName          string    `json:"promptName"`
+	Description         string    `json:"description,omitempty"`
+	ArgumentsSchemaJSON string    `json:"argumentsSchemaJson,omitempty"`
+	Enabled             bool      `json:"enabled"`
+	DiscoveredAt        time.Time `json:"discoveredAt"`
+}
+
+type AccessTokenMCPServer struct {
+	TokenID           string    `json:"tokenId"`
+	ServerID          string    `json:"serverId"`
+	ToolAllowlist     []string  `json:"toolAllowlist,omitempty"`
+	ResourceAllowlist []string  `json:"resourceAllowlist,omitempty"`
+	PromptAllowlist   []string  `json:"promptAllowlist,omitempty"`
+	CreatedAt         time.Time `json:"createdAt"`
+}
+
+type MCPServerCapabilities struct {
+	Server   MCPServer           `json:"server"`
+	Tools    []MCPServerTool     `json:"tools"`
+	Resources []MCPServerResource `json:"resources"`
+	Prompts  []MCPServerPrompt   `json:"prompts"`
 }
 
 type EffectiveAccess struct {

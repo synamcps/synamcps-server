@@ -22,7 +22,9 @@ import (
 	"github.com/zmiishe/synamcps/internal/knowledge/ingest"
 	"github.com/zmiishe/synamcps/internal/llm"
 	"github.com/zmiishe/synamcps/internal/mcp"
+	"github.com/zmiishe/synamcps/internal/mcpproxy"
 	"github.com/zmiishe/synamcps/internal/observability"
+	"github.com/zmiishe/synamcps/internal/secrets"
 	"github.com/zmiishe/synamcps/internal/session"
 	"github.com/zmiishe/synamcps/internal/storage/blob"
 	metapg "github.com/zmiishe/synamcps/internal/storage/meta/postgres"
@@ -53,6 +55,23 @@ func main() {
 		log.Fatalf("init access store: %v", err)
 	}
 	accessService := access.NewService(accessStore)
+	var mcpStore *mcpproxy.Store
+	var mcpManager *mcpproxy.Manager
+	var mcpAccess *mcpproxy.AccessService
+	if cfg.MCPProxy.Enabled {
+		cipher, err := secrets.NewCipher(cfg.MCPProxySecretsKey())
+		if err != nil {
+			log.Printf("mcp proxy secrets disabled: %v", err)
+		} else {
+			mcpStore, err = mcpproxy.NewStore(context.Background(), cfg.Metadata.DSN, cipher)
+			if err != nil {
+				log.Fatalf("init mcp proxy store: %v", err)
+			}
+			mcpManager = mcpproxy.NewManager(cfg.MCPProxy, mcpStore)
+			mcpAccess = mcpproxy.NewAccessService(mcpStore)
+			accessService.AttachMCPStore(mcpStore)
+		}
+	}
 	gateway.SetOpaqueTokenResolver(accessService)
 	usageService := usage.NewService(cfg.Redis, cfg.Usage)
 	if cfg.Usage.Exporters.VictoriaMetrics.Enabled {
@@ -100,7 +119,7 @@ func main() {
 		"blob":     blobStore,
 	}))
 	statusHandler := httpapi.NewStatusHandler(cfg, usageService, catalog, sessions, blobStore)
-	apiRouter := httpapi.NewRouterWithAdmin(gateway, sessions, knowledgeService, accessService, usageService, cfg.S3.Bucket, cfg.Search.Filters.SourceURL.AllowPartialMatch, statusHandler)
+	apiRouter := httpapi.NewRouterWithAdmin(gateway, sessions, knowledgeService, accessService, usageService, cfg.S3.Bucket, cfg.Search.Filters.SourceURL.AllowPartialMatch, statusHandler, mcpStore, mcpManager, mcpAccess)
 	rootMux.Handle("/api/", apiRouter)
 	rootMux.HandleFunc("/api/capabilities", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -122,6 +141,9 @@ func main() {
 	mcpServer := mcp.NewServer(sessions, knowledgeService)
 	mcpServer.AttachAccess(accessService)
 	mcpServer.AttachUsage(usageService)
+	if mcpManager != nil {
+		mcpServer.AttachProxy(mcpManager, mcpAccess)
+	}
 	if cfg.Transport.StreamableHTTP {
 		streamablehttp.NewHandler(mcpServer, gateway, sessions).Register(rootMux)
 	}

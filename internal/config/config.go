@@ -28,6 +28,19 @@ type Config struct {
 	API           APIConfig           `yaml:"api"`
 	Search        SearchConfig        `yaml:"search"`
 	Usage         UsageConfig         `yaml:"usage"`
+	MCPProxy      MCPProxyConfig      `yaml:"mcp_proxy"`
+}
+
+type MCPProxyConfig struct {
+	Enabled                   bool   `yaml:"enabled"`
+	SecretsEncryptionKeyEnvRef string `yaml:"secrets_encryption_key_env_ref"`
+	SessionIdleTimeoutSeconds int    `yaml:"session_idle_timeout_seconds"`
+	ConnectTimeoutSeconds     int    `yaml:"connect_timeout_seconds"`
+	CallTimeoutSeconds        int    `yaml:"call_timeout_seconds"`
+}
+
+func (c Config) MCPProxySecretsKey() string {
+	return resolveSecret(c.MCPProxy.SecretsEncryptionKeyEnvRef)
 }
 
 type ServerConfig struct {

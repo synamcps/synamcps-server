@@ -106,3 +106,10 @@ usage:
       enabled: false
       remote_write_url: ""
       interval_seconds: 30
+
+mcp_proxy:
+  enabled: true
+  secrets_encryption_key_env_ref: "env:MCP_PROXY_SECRETS_KEY"
+  session_idle_timeout_seconds: 300
+  connect_timeout_seconds: 30
+  call_timeout_seconds: 120

@@ -78,6 +78,7 @@ go run ./cmd/server
 - MCP предоставляет **динамический tools/list** на основе bearer-токена (видны только разрешённые инструменты/хранилища).
 - Поддерживается **Streamable HTTP** транспорт (`/mcp`) и опционально legacy SSE.
 - Имена MCP tools используют `_` (underscore), чтобы избежать фильтрации/варнингов у некоторых клиентов.
+- **MCP proxy**: upstream HTTP/SSE серверы в Admin UI (вкладка MCP Servers), discovery tools/resources/prompts, ACL и per-token scopes. Идентификаторы: `{slug}__{name}`, resources: `syna-mcp/{slug}/{uri}`. Секреты шифруются в Postgres (`MCP_PROXY_SECRETS_KEY`).
 
 ### Usage / Rate limit / Metrics
 

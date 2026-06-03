@@ -78,6 +78,10 @@ go run ./cmd/server
 - MCP exposes a **dynamic `tools/list`** based on the bearer token (only allowed tools/storages are visible).
 - Supports **Streamable HTTP** transport (`/mcp`) and optional legacy SSE.
 - MCP tool names use `_` (underscore) to avoid filtering/warnings in some clients.
+- **MCP proxy**: register upstream HTTP/SSE MCP servers in Admin UI (`MCP Servers` tab), discover tools/resources/prompts, restrict by ACL and per-token scopes. Proxied identifiers:
+  - tools/prompts: `{slug}__{upstream_name}`
+  - resources: `syna-mcp/{slug}/{upstream_uri}`
+- Upstream auth secrets are stored **encrypted in Postgres** (`MCP_PROXY_SECRETS_KEY` in `.env`).
 
 ### Usage / Rate limit / Metrics
 
