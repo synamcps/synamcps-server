@@ -9,12 +9,12 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/zmiishe/synamcps/internal/config"
-	"github.com/zmiishe/synamcps/internal/llm"
-	"github.com/zmiishe/synamcps/internal/models"
-	"github.com/zmiishe/synamcps/internal/storage/blob"
-	"github.com/zmiishe/synamcps/internal/storage/meta"
-	"github.com/zmiishe/synamcps/internal/storage/vector"
+	"github.com/synamcps/synamcps-server/internal/config"
+	"github.com/synamcps/synamcps-server/internal/llm"
+	"github.com/synamcps/synamcps-server/internal/models"
+	"github.com/synamcps/synamcps-server/internal/storage/blob"
+	"github.com/synamcps/synamcps-server/internal/storage/meta"
+	"github.com/synamcps/synamcps-server/internal/storage/vector"
 )
 
 type Pipeline struct {
@@ -42,6 +42,13 @@ func NewPipeline(
 		catalog:     catalog,
 		blobStore:   blobStore,
 	}
+}
+
+// Embed produces an embedding for a query using the same provider used at
+// indexing time, so search operates in a consistent vector space.
+func (p *Pipeline) Embed(ctx context.Context, text string) ([]float32, error) {
+	vec, _, err := p.embedder.Embed(ctx, text)
+	return vec, err
 }
 
 type SaveRequest struct {

@@ -8,8 +8,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/zmiishe/synamcps/internal/config"
-	"github.com/zmiishe/synamcps/internal/models"
+	"github.com/synamcps/synamcps-server/internal/config"
+	"github.com/synamcps/synamcps-server/internal/models"
 )
 
 type Manager struct {
@@ -70,10 +70,15 @@ func (m *Manager) newClient(ctx context.Context, srv models.MCPServer) (*upstrea
 }
 
 func (m *Manager) getClient(ctx context.Context, serverID string) (*upstreamClient, error) {
+	idle := time.Duration(m.cfg.SessionIdleTimeoutSeconds) * time.Second
 	m.mu.Lock()
 	if c, ok := m.sessions[serverID]; ok {
-		m.mu.Unlock()
-		return c, nil
+		if idle <= 0 || time.Since(c.createdAt) < idle {
+			m.mu.Unlock()
+			return c, nil
+		}
+		// Cached session is stale; drop it and reconnect below.
+		delete(m.sessions, serverID)
 	}
 	m.mu.Unlock()
 	srv, err := m.store.GetServer(ctx, serverID)

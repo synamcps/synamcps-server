@@ -8,17 +8,17 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/zmiishe/synamcps/internal/auth"
-	"github.com/zmiishe/synamcps/internal/config"
-	"github.com/zmiishe/synamcps/internal/httpapi"
-	"github.com/zmiishe/synamcps/internal/knowledge"
-	"github.com/zmiishe/synamcps/internal/knowledge/ingest"
-	"github.com/zmiishe/synamcps/internal/llm"
-	"github.com/zmiishe/synamcps/internal/models"
-	"github.com/zmiishe/synamcps/internal/session"
-	"github.com/zmiishe/synamcps/internal/storage/blob"
-	metapg "github.com/zmiishe/synamcps/internal/storage/meta/postgres"
-	"github.com/zmiishe/synamcps/internal/storage/vector/pgvector"
+	"github.com/synamcps/synamcps-server/internal/auth"
+	"github.com/synamcps/synamcps-server/internal/config"
+	"github.com/synamcps/synamcps-server/internal/httpapi"
+	"github.com/synamcps/synamcps-server/internal/knowledge"
+	"github.com/synamcps/synamcps-server/internal/knowledge/ingest"
+	"github.com/synamcps/synamcps-server/internal/llm"
+	"github.com/synamcps/synamcps-server/internal/models"
+	"github.com/synamcps/synamcps-server/internal/session"
+	"github.com/synamcps/synamcps-server/internal/storage/blob"
+	metapg "github.com/synamcps/synamcps-server/internal/storage/meta/postgres"
+	"github.com/synamcps/synamcps-server/internal/storage/vector/pgvector"
 )
 
 func TestCreateAndListKnowledge(t *testing.T) {

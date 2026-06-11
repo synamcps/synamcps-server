@@ -14,27 +14,27 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/zmiishe/synamcps/internal/auth"
-	"github.com/zmiishe/synamcps/internal/config"
-	"github.com/zmiishe/synamcps/internal/access"
-	"github.com/zmiishe/synamcps/internal/httpapi"
-	"github.com/zmiishe/synamcps/internal/knowledge"
-	"github.com/zmiishe/synamcps/internal/knowledge/ingest"
-	"github.com/zmiishe/synamcps/internal/llm"
-	"github.com/zmiishe/synamcps/internal/mcp"
-	"github.com/zmiishe/synamcps/internal/mcpproxy"
-	"github.com/zmiishe/synamcps/internal/observability"
-	"github.com/zmiishe/synamcps/internal/secrets"
-	"github.com/zmiishe/synamcps/internal/session"
-	"github.com/zmiishe/synamcps/internal/storage/blob"
-	metapg "github.com/zmiishe/synamcps/internal/storage/meta/postgres"
-	"github.com/zmiishe/synamcps/internal/storage/vector"
-	"github.com/zmiishe/synamcps/internal/storage/vector/pgvector"
-	"github.com/zmiishe/synamcps/internal/storage/vector/qdrant"
-	"github.com/zmiishe/synamcps/internal/transport/legacysse"
-	"github.com/zmiishe/synamcps/internal/transport/streamablehttp"
-	"github.com/zmiishe/synamcps/internal/usage"
-	"github.com/zmiishe/synamcps/internal/web"
+	"github.com/synamcps/synamcps-server/internal/auth"
+	"github.com/synamcps/synamcps-server/internal/config"
+	"github.com/synamcps/synamcps-server/internal/access"
+	"github.com/synamcps/synamcps-server/internal/httpapi"
+	"github.com/synamcps/synamcps-server/internal/knowledge"
+	"github.com/synamcps/synamcps-server/internal/knowledge/ingest"
+	"github.com/synamcps/synamcps-server/internal/llm"
+	"github.com/synamcps/synamcps-server/internal/mcp"
+	"github.com/synamcps/synamcps-server/internal/mcpproxy"
+	"github.com/synamcps/synamcps-server/internal/observability"
+	"github.com/synamcps/synamcps-server/internal/secrets"
+	"github.com/synamcps/synamcps-server/internal/session"
+	"github.com/synamcps/synamcps-server/internal/storage/blob"
+	metapg "github.com/synamcps/synamcps-server/internal/storage/meta/postgres"
+	"github.com/synamcps/synamcps-server/internal/storage/vector"
+	"github.com/synamcps/synamcps-server/internal/storage/vector/pgvector"
+	"github.com/synamcps/synamcps-server/internal/storage/vector/qdrant"
+	"github.com/synamcps/synamcps-server/internal/transport/legacysse"
+	"github.com/synamcps/synamcps-server/internal/transport/streamablehttp"
+	"github.com/synamcps/synamcps-server/internal/usage"
+	"github.com/synamcps/synamcps-server/internal/web"
 )
 
 func main() {
@@ -119,7 +119,7 @@ func main() {
 		"blob":     blobStore,
 	}))
 	statusHandler := httpapi.NewStatusHandler(cfg, usageService, catalog, sessions, blobStore)
-	apiRouter := httpapi.NewRouterWithAdmin(gateway, sessions, knowledgeService, accessService, usageService, cfg.S3.Bucket, cfg.Search.Filters.SourceURL.AllowPartialMatch, statusHandler, mcpStore, mcpManager, mcpAccess)
+	apiRouter := httpapi.NewRouterWithAdmin(gateway, sessions, knowledgeService, accessService, usageService, cfg.S3.Bucket, cfg.Search.Filters.SourceURL.AllowPartialMatch, statusHandler, mcpStore, mcpManager, mcpAccess, cfg.Limits.MaxUploadBytes)
 	rootMux.Handle("/api/", apiRouter)
 	rootMux.HandleFunc("/api/capabilities", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

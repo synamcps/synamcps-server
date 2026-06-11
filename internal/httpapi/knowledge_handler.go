@@ -6,8 +6,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/zmiishe/synamcps/internal/knowledge"
-	"github.com/zmiishe/synamcps/internal/models"
+	"github.com/synamcps/synamcps-server/internal/knowledge"
+	"github.com/synamcps/synamcps-server/internal/models"
 )
 
 type KnowledgeHandler struct {

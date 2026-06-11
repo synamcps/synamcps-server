@@ -5,13 +5,13 @@ import (
 	"errors"
 	"strings"
 
-	"github.com/zmiishe/synamcps/internal/access"
-	"github.com/zmiishe/synamcps/internal/auth"
-	"github.com/zmiishe/synamcps/internal/knowledge/ingest"
-	"github.com/zmiishe/synamcps/internal/models"
-	"github.com/zmiishe/synamcps/internal/policy"
-	"github.com/zmiishe/synamcps/internal/storage/meta"
-	"github.com/zmiishe/synamcps/internal/storage/vector"
+	"github.com/synamcps/synamcps-server/internal/access"
+	"github.com/synamcps/synamcps-server/internal/auth"
+	"github.com/synamcps/synamcps-server/internal/knowledge/ingest"
+	"github.com/synamcps/synamcps-server/internal/models"
+	"github.com/synamcps/synamcps-server/internal/policy"
+	"github.com/synamcps/synamcps-server/internal/storage/meta"
+	"github.com/synamcps/synamcps-server/internal/storage/vector"
 )
 
 type Service struct {
@@ -168,35 +168,50 @@ func (s *Service) Get(ctx context.Context, p models.Principal, id string) (model
 	if !ok {
 		return models.DocumentRecord{}, errors.New("not found")
 	}
-	if s.access != nil {
-		if _, ok, err := s.access.CanAccessStorage(ctx, p, accessTokenFromContext(ctx), tokenScopesFromContext(ctx), doc.StorageID, models.PermissionDocumentRead); err != nil || !ok {
-			if err != nil {
-				return models.DocumentRecord{}, err
-			}
-			return models.DocumentRecord{}, errors.New("forbidden")
-		}
-	} else if !policy.CanRead(p, doc) {
+	if !s.canReadDoc(ctx, p, doc) {
 		return models.DocumentRecord{}, errors.New("forbidden")
 	}
 	return doc, nil
 }
 
 func (s *Service) List(ctx context.Context, p models.Principal, page models.PageRequest) (models.PaginatedKnowledgeList, error) {
-	if s.access != nil && page.StorageID != "" {
-		if _, ok, err := s.access.CanAccessStorage(ctx, p, accessTokenFromContext(ctx), tokenScopesFromContext(ctx), page.StorageID, models.PermissionDocumentRead); err != nil || !ok {
-			if err != nil {
-				return models.PaginatedKnowledgeList{}, err
-			}
-			return models.PaginatedKnowledgeList{}, errors.New("forbidden")
+	if s.access != nil {
+		// Resolve the readable storage set once, then let the catalog apply
+		// authorization + visibility inside SQL. This keeps pagination counts
+		// correct and avoids a permission query per returned row.
+		readable, err := s.access.ReadableStorageIDs(ctx, p, accessTokenFromContext(ctx), tokenScopesFromContext(ctx))
+		if err != nil {
+			return models.PaginatedKnowledgeList{}, err
 		}
+		if page.StorageID != "" {
+			if _, ok := readable[page.StorageID]; !ok {
+				return models.PaginatedKnowledgeList{}, errors.New("forbidden")
+			}
+			page.AllowedStorageIDs = []string{page.StorageID}
+		} else {
+			if len(readable) == 0 {
+				return emptyPage(page), nil
+			}
+			ids := make([]string, 0, len(readable))
+			for id := range readable {
+				ids = append(ids, id)
+			}
+			page.AllowedStorageIDs = ids
+		}
+		page.ApplyVisibility = true
+		page.VisibilityOwnerIDs = ownerIdentifiers(p)
+		page.VisibilityGroups = p.Groups
+		return s.catalog.List(ctx, page)
 	}
+
+	// Legacy path (no access service): policy-based post-filter.
 	all, err := s.catalog.List(ctx, page)
 	if err != nil {
 		return models.PaginatedKnowledgeList{}, err
 	}
 	filtered := make([]models.DocumentRecord, 0, len(all.Items))
 	for _, d := range all.Items {
-		if s.canReadDoc(ctx, p, d) {
+		if policy.CanRead(p, d) {
 			filtered = append(filtered, d)
 		}
 	}
@@ -204,6 +219,34 @@ func (s *Service) List(ctx context.Context, p models.Principal, page models.Page
 	all.Total = int64(len(filtered))
 	all.HasNext = int64(all.Page*all.PageSize) < all.Total
 	return all, nil
+}
+
+func emptyPage(page models.PageRequest) models.PaginatedKnowledgeList {
+	ps := page.PageSize
+	if ps <= 0 {
+		ps = 20
+	}
+	pg := page.Page
+	if pg <= 0 {
+		pg = 1
+	}
+	return models.PaginatedKnowledgeList{Items: []models.DocumentRecord{}, Page: pg, PageSize: ps}
+}
+
+func ownerIdentifiers(p models.Principal) []string {
+	out := make([]string, 0, 2)
+	seen := map[string]struct{}{}
+	for _, id := range []string{p.UserID, models.SubjectKeyForPrincipal(p)} {
+		if id == "" {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		out = append(out, id)
+	}
+	return out
 }
 
 func (s *Service) Delete(ctx context.Context, p models.Principal, id string) error {
@@ -232,12 +275,17 @@ func (s *Service) Delete(ctx context.Context, p models.Principal, id string) err
 
 func (s *Service) Search(ctx context.Context, p models.Principal, req models.SearchRequest, allowPartial bool) ([]models.SearchHit, error) {
 	page := req.Filters
-	if s.access != nil && page.StorageID != "" {
-		if _, ok, err := s.access.CanAccessStorage(ctx, p, accessTokenFromContext(ctx), tokenScopesFromContext(ctx), page.StorageID, models.PermissionSearchRead); err != nil || !ok {
-			if err != nil {
-				return nil, err
+	var readable map[string]struct{}
+	if s.access != nil {
+		var err error
+		readable, err = s.access.ReadableStorageIDs(ctx, p, accessTokenFromContext(ctx), tokenScopesFromContext(ctx))
+		if err != nil {
+			return nil, err
+		}
+		if page.StorageID != "" {
+			if _, ok := readable[page.StorageID]; !ok {
+				return nil, errors.New("forbidden")
 			}
-			return nil, errors.New("forbidden")
 		}
 	}
 
@@ -248,7 +296,10 @@ func (s *Service) Search(ctx context.Context, p models.Principal, req models.Sea
 		page.SourceURLMode = "exact"
 	}
 
-	queryVec := []float32{0.1, 0.2}
+	queryVec, err := s.embedQuery(ctx, req.Query)
+	if err != nil {
+		return nil, err
+	}
 	recs, err := s.vectorStore.Search(ctx, queryVec, req.TopK, page)
 	if err != nil {
 		return nil, err
@@ -260,7 +311,7 @@ func (s *Service) Search(ctx context.Context, p models.Principal, req models.Sea
 		if err != nil || !ok {
 			continue
 		}
-		if !s.canReadDoc(ctx, p, doc) {
+		if !s.canReadDocCached(p, doc, readable) {
 			continue
 		}
 		snippet := r.Text
@@ -284,8 +335,67 @@ func (s *Service) canReadDoc(ctx context.Context, p models.Principal, d models.D
 	if s.access == nil {
 		return policy.CanRead(p, d)
 	}
-	_, ok, err := s.access.CanAccessStorage(ctx, p, accessTokenFromContext(ctx), tokenScopesFromContext(ctx), d.StorageID, models.PermissionDocumentRead)
-	return err == nil && ok
+	if _, ok, err := s.access.CanAccessStorage(ctx, p, accessTokenFromContext(ctx), tokenScopesFromContext(ctx), d.StorageID, models.PermissionDocumentRead); err != nil || !ok {
+		return false
+	}
+	// Storage access is necessary but not sufficient: a "personal" document must
+	// only be visible to its owner, even to others who can read the storage.
+	return canSeeVisibility(p, d)
+}
+
+// canReadDocCached is canReadDoc using a pre-computed readable-storage set,
+// avoiding a per-document permission query in hot loops (e.g. search results).
+func (s *Service) canReadDocCached(p models.Principal, d models.DocumentRecord, readable map[string]struct{}) bool {
+	if s.access == nil {
+		return policy.CanRead(p, d)
+	}
+	if _, ok := readable[d.StorageID]; !ok {
+		return false
+	}
+	return canSeeVisibility(p, d)
+}
+
+func (s *Service) embedQuery(ctx context.Context, query string) ([]float32, error) {
+	if s.pipeline != nil {
+		return s.pipeline.Embed(ctx, query)
+	}
+	return []float32{0.1, 0.2}, nil
+}
+
+// canSeeVisibility enforces per-document visibility on top of storage access.
+// Empty/unknown visibility falls back to storage-level access (allow) to avoid
+// hiding legacy records that predate the visibility field.
+func canSeeVisibility(p models.Principal, d models.DocumentRecord) bool {
+	switch d.Visibility {
+	case models.VisibilityPublic:
+		return true
+	case models.VisibilityPersonal:
+		return ownsDocument(p, d)
+	case models.VisibilityGroup:
+		return ownsDocument(p, d) || intersectsStrings(d.GroupIDs, p.Groups)
+	default:
+		return true
+	}
+}
+
+func ownsDocument(p models.Principal, d models.DocumentRecord) bool {
+	if d.OwnerID == "" {
+		return false
+	}
+	return d.OwnerID == p.UserID || d.OwnerID == models.SubjectKeyForPrincipal(p)
+}
+
+func intersectsStrings(a, b []string) bool {
+	set := make(map[string]struct{}, len(a))
+	for _, v := range a {
+		set[v] = struct{}{}
+	}
+	for _, v := range b {
+		if _, ok := set[v]; ok {
+			return true
+		}
+	}
+	return false
 }
 
 func accessTokenFromContext(ctx context.Context) *models.AccessToken {

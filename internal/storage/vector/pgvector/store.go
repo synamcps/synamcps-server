@@ -9,8 +9,8 @@ import (
 	"sync"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/zmiishe/synamcps/internal/models"
-	"github.com/zmiishe/synamcps/internal/storage/vector"
+	"github.com/synamcps/synamcps-server/internal/models"
+	"github.com/synamcps/synamcps-server/internal/storage/vector"
 )
 
 type Store struct {
@@ -19,6 +19,9 @@ type Store struct {
 	pool    *pgxpool.Pool
 	useDB   bool
 }
+
+// maxVectorScan bounds how many candidate rows the brute-force scorer will load.
+const maxVectorScan = 50000
 
 func New(ctx context.Context, dsn string) (*Store, error) {
 	if dsn == "" {
@@ -190,7 +193,10 @@ func (s *Store) searchDB(ctx context.Context, query []float32, topK int, filter 
 		}
 		argn++
 	}
-	querySQL := fmt.Sprintf("SELECT payload_json, embedding_json, text_content FROM knowledge_vectors WHERE %s", where)
+	// Brute-force cosine scoring happens in Go, so cap the number of candidate
+	// rows pulled into memory to avoid OOM on large collections. This is a
+	// safety valve pending a native pgvector ANN index.
+	querySQL := fmt.Sprintf("SELECT payload_json, embedding_json, text_content FROM knowledge_vectors WHERE %s LIMIT %d", where, maxVectorScan)
 	rows, err := s.pool.Query(ctx, querySQL, args...)
 	if err != nil {
 		return nil, err

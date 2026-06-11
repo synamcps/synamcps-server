@@ -5,8 +5,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/zmiishe/synamcps/internal/mcpproxy"
-	"github.com/zmiishe/synamcps/internal/models"
+	"github.com/synamcps/synamcps-server/internal/mcpproxy"
+	"github.com/synamcps/synamcps-server/internal/models"
 )
 
 func (h *AdminHandler) handleMCPServers(w http.ResponseWriter, r *http.Request, path string, p models.Principal) {
@@ -267,6 +267,9 @@ func (h *AdminHandler) putMCPServerACL(w http.ResponseWriter, r *http.Request, i
 func (h *AdminHandler) patchTokenMCPScopes(w http.ResponseWriter, r *http.Request, tokenID string, p models.Principal) {
 	if h.mcpStore == nil {
 		http.Error(w, "mcp proxy is not configured", http.StatusServiceUnavailable)
+		return
+	}
+	if !h.requireTokenOwner(w, r, p, tokenID) {
 		return
 	}
 	var req struct {

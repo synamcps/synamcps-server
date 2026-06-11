@@ -13,8 +13,8 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
-	"github.com/zmiishe/synamcps/internal/config"
-	"github.com/zmiishe/synamcps/internal/models"
+	"github.com/synamcps/synamcps-server/internal/config"
+	"github.com/synamcps/synamcps-server/internal/models"
 )
 
 type Service struct {
@@ -33,7 +33,7 @@ func (s *Service) RecordStatusError(ctx context.Context, component string) {
 	}
 	if s.redis == nil {
 		s.mu.Lock()
-		s.counters[counterKey("syna_status_errors_total", map[string]string{"component": component})]++
+		s.bumpCounter(counterKey("syna_status_errors_total", map[string]string{"component": component}), 1)
 		s.mu.Unlock()
 		return
 	}
@@ -201,15 +201,15 @@ func (s *Service) Record(ctx context.Context, event models.UsageEvent) {
 	if len(s.events) > 10000 {
 		s.events = s.events[len(s.events)-10000:]
 	}
-	s.counters[counterKey("syna_mcp_requests_total", labels)]++
+	s.bumpCounter(counterKey("syna_mcp_requests_total", labels), 1)
 	if event.Status == "rate_limited" {
-		s.counters[counterKey("syna_mcp_rate_limited_total", labels)]++
+		s.bumpCounter(counterKey("syna_mcp_rate_limited_total", labels), 1)
 	}
 	if event.Status == "error" || event.Status == "forbidden" {
-		s.counters[counterKey("syna_mcp_errors_total", labels)]++
+		s.bumpCounter(counterKey("syna_mcp_errors_total", labels), 1)
 	}
-	s.counters[counterKey("syna_mcp_bytes_in_total", labels)] += event.BytesIn
-	s.counters[counterKey("syna_mcp_bytes_out_total", labels)] += event.BytesOut
+	s.bumpCounter(counterKey("syna_mcp_bytes_in_total", labels), event.BytesIn)
+	s.bumpCounter(counterKey("syna_mcp_bytes_out_total", labels), event.BytesOut)
 	s.mu.Unlock()
 
 	if s.redis == nil {
@@ -316,6 +316,20 @@ func (s *Service) key(key string) string {
 	return s.prefix + ":" + key
 }
 
+// maxCounterSeries caps the number of distinct in-memory counter series to
+// prevent unbounded memory growth from attacker-controlled label values
+// (e.g. arbitrary JSON-RPC method names). Must be called with s.mu held.
+const maxCounterSeries = 50000
+
+// bumpCounter increments a counter, refusing to create new series once the
+// cardinality cap is reached. Caller must hold s.mu.
+func (s *Service) bumpCounter(key string, delta int64) {
+	if _, exists := s.counters[key]; !exists && len(s.counters) >= maxCounterSeries {
+		return
+	}
+	s.counters[key] += delta
+}
+
 func firstPositive(values ...int) int {
 	for _, v := range values {
 		if v > 0 {
@@ -360,5 +374,9 @@ func splitCounterKey(key string) (string, string) {
 func escapeLabel(v string) string {
 	v = strings.ReplaceAll(v, `\`, `\\`)
 	v = strings.ReplaceAll(v, `"`, `\"`)
+	// Newlines/carriage returns would let an attacker-controlled label value
+	// (e.g. a JSON-RPC method name) inject extra lines into /metrics output.
+	v = strings.ReplaceAll(v, "\n", `\n`)
+	v = strings.ReplaceAll(v, "\r", `\r`)
 	return v
 }

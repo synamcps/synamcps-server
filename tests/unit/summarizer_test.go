@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/zmiishe/synamcps/internal/config"
-	"github.com/zmiishe/synamcps/internal/llm"
+	"github.com/synamcps/synamcps-server/internal/config"
+	"github.com/synamcps/synamcps-server/internal/llm"
 )
 
 func TestSummarizerRespectsTokenLimit(t *testing.T) {

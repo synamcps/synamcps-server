@@ -5,13 +5,16 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
-	"github.com/zmiishe/synamcps/internal/access"
-	"github.com/zmiishe/synamcps/internal/mcpproxy"
-	"github.com/zmiishe/synamcps/internal/models"
-	"github.com/zmiishe/synamcps/internal/usage"
+	"github.com/synamcps/synamcps-server/internal/access"
+	"github.com/synamcps/synamcps-server/internal/mcpproxy"
+	"github.com/synamcps/synamcps-server/internal/models"
+	"github.com/synamcps/synamcps-server/internal/usage"
 )
+
+const ensurePrincipalTTL = 5 * time.Minute
 
 type AdminHandler struct {
 	access     *access.Service
@@ -20,10 +23,27 @@ type AdminHandler struct {
 	mcpStore   *mcpproxy.Store
 	mcpManager *mcpproxy.Manager
 	mcpAccess  *mcpproxy.AccessService
+
+	ensuredMu sync.Mutex
+	ensured   map[string]time.Time
 }
 
 func NewAdminHandler(accessService *access.Service, usageService *usage.Service, s3Bucket string) *AdminHandler {
-	return &AdminHandler{access: accessService, usage: usageService, s3Bucket: s3Bucket}
+	return &AdminHandler{access: accessService, usage: usageService, s3Bucket: s3Bucket, ensured: map[string]time.Time{}}
+}
+
+// shouldEnsurePrincipal rate-limits the per-request EnsurePrincipal upsert
+// (user + groups + personal storage) to at most once per TTL per subject,
+// avoiding several DB writes on every admin API call.
+func (h *AdminHandler) shouldEnsurePrincipal(subjectKey string) bool {
+	h.ensuredMu.Lock()
+	defer h.ensuredMu.Unlock()
+	now := time.Now()
+	if t, ok := h.ensured[subjectKey]; ok && now.Sub(t) < ensurePrincipalTTL {
+		return false
+	}
+	h.ensured[subjectKey] = now
+	return true
 }
 
 func (h *AdminHandler) AttachMCP(store *mcpproxy.Store, manager *mcpproxy.Manager, mcpAccess *mcpproxy.AccessService) {
@@ -38,7 +58,7 @@ func (h *AdminHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
-	if h.access != nil {
+	if h.access != nil && h.shouldEnsurePrincipal(models.SubjectKeyForPrincipal(p)) {
 		_, _, _ = h.access.EnsurePrincipal(r.Context(), p, h.s3Bucket)
 	}
 	path := strings.TrimPrefix(r.URL.Path, "/api/admin")
@@ -88,10 +108,22 @@ func (h *AdminHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		h.deleteGroup(w, r, path)
 	case r.Method == http.MethodGet && strings.HasSuffix(path, "/members"):
+		if !isPlatformAdmin(p) {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
 		h.listGroupMembers(w, r, path)
 	case r.Method == http.MethodPut && strings.Contains(path, "/members/"):
+		if !isPlatformAdmin(p) {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
 		h.addGroupMember(w, r, path)
 	case r.Method == http.MethodDelete && strings.Contains(path, "/members/"):
+		if !isPlatformAdmin(p) {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
 		h.removeGroupMember(w, r, path)
 	case r.Method == http.MethodGet && path == "/storages":
 		h.listStorages(w, r, p)
@@ -100,9 +132,9 @@ func (h *AdminHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case r.Method == http.MethodPost && path == "/storages":
 		h.createStorage(w, r, p)
 	case r.Method == http.MethodDelete && strings.HasPrefix(path, "/storages/") && !strings.Contains(path, "/acl"):
-		h.deleteStorage(w, r, path)
+		h.deleteStorage(w, r, path, p)
 	case r.Method == http.MethodGet && strings.HasSuffix(path, "/acl"):
-		h.storageACL(w, r, path)
+		h.storageACL(w, r, path, p)
 	case r.Method == http.MethodPut && strings.HasSuffix(path, "/acl"):
 		h.upsertACL(w, r, path, p)
 	case r.Method == http.MethodGet && path == "/tokens":
@@ -110,11 +142,11 @@ func (h *AdminHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case r.Method == http.MethodPost && path == "/tokens":
 		h.createToken(w, r, p)
 	case r.Method == http.MethodDelete && strings.HasPrefix(path, "/tokens/") && !strings.Contains(path, "/connect-options") && !strings.Contains(path, "/mcp-scopes") && !strings.Contains(path, "/rate-limit") && !strings.Contains(path, "/revoke") && !strings.Contains(path, "/rotate"):
-		h.deleteToken(w, r, path)
+		h.deleteToken(w, r, path, p)
 	case r.Method == http.MethodPatch && strings.HasSuffix(path, "/rate-limit"):
-		h.patchRateLimit(w, r, path)
+		h.patchRateLimit(w, r, path, p)
 	case r.Method == http.MethodPost && strings.HasSuffix(path, "/revoke"):
-		h.revokeToken(w, r, path)
+		h.revokeToken(w, r, path, p)
 	case r.Method == http.MethodPost && strings.HasSuffix(path, "/rotate"):
 		h.rotateToken(w, r, path, p)
 	case r.Method == http.MethodGet && strings.HasSuffix(path, "/connect-options"):
@@ -412,16 +444,33 @@ func (h *AdminHandler) getStorageDetails(w http.ResponseWriter, r *http.Request,
 	}, http.StatusOK)
 }
 
-func (h *AdminHandler) deleteStorage(w http.ResponseWriter, r *http.Request, path string) {
-	if err := h.access.Store().DeleteStorage(r.Context(), idFromPath(path, 1)); err != nil {
+func (h *AdminHandler) deleteStorage(w http.ResponseWriter, r *http.Request, path string, p models.Principal) {
+	storageID := idFromPath(path, 1)
+	if _, ok, err := h.access.CanAccessStorage(r.Context(), p, nil, nil, storageID, models.PermissionStorageDelete); err != nil || !ok {
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	if err := h.access.Store().DeleteStorage(r.Context(), storageID); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (h *AdminHandler) storageACL(w http.ResponseWriter, r *http.Request, path string) {
+func (h *AdminHandler) storageACL(w http.ResponseWriter, r *http.Request, path string, p models.Principal) {
 	storageID := storageIDFromACLPath(path)
+	if _, ok, err := h.access.CanAccessStorage(r.Context(), p, nil, nil, storageID, models.PermissionACLManage); err != nil || !ok {
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
 	acl, err := h.access.Store().ACLForStorage(r.Context(), storageID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -431,12 +480,21 @@ func (h *AdminHandler) storageACL(w http.ResponseWriter, r *http.Request, path s
 }
 
 func (h *AdminHandler) upsertACL(w http.ResponseWriter, r *http.Request, path string, p models.Principal) {
+	storageID := storageIDFromACLPath(path)
+	if _, ok, err := h.access.CanAccessStorage(r.Context(), p, nil, nil, storageID, models.PermissionACLManage); err != nil || !ok {
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
 	var req models.ACLBinding
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	req.StorageID = storageIDFromACLPath(path)
+	req.StorageID = storageID
 	if req.GrantedBy == "" {
 		req.GrantedBy = models.SubjectKeyForPrincipal(p)
 	}
@@ -519,8 +577,11 @@ func (h *AdminHandler) createToken(w http.ResponseWriter, r *http.Request, p mod
 	writeJSON(w, map[string]any{"token": token, "rawToken": raw}, http.StatusCreated)
 }
 
-func (h *AdminHandler) deleteToken(w http.ResponseWriter, r *http.Request, path string) {
+func (h *AdminHandler) deleteToken(w http.ResponseWriter, r *http.Request, path string, p models.Principal) {
 	tokenID := idFromPath(path, 1)
+	if !h.requireTokenOwner(w, r, p, tokenID) {
+		return
+	}
 	if h.mcpStore != nil {
 		_ = h.mcpStore.ReplaceTokenMCPServers(r.Context(), tokenID, nil)
 	}
@@ -531,7 +592,10 @@ func (h *AdminHandler) deleteToken(w http.ResponseWriter, r *http.Request, path 
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (h *AdminHandler) patchRateLimit(w http.ResponseWriter, r *http.Request, path string) {
+func (h *AdminHandler) patchRateLimit(w http.ResponseWriter, r *http.Request, path string, p models.Principal) {
+	if !h.requireTokenOwner(w, r, p, tokenIDFromPath(path)) {
+		return
+	}
 	var req models.RateLimitPolicy
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -544,7 +608,10 @@ func (h *AdminHandler) patchRateLimit(w http.ResponseWriter, r *http.Request, pa
 	writeJSON(w, map[string]string{"status": "updated", "tokenId": tokenIDFromPath(path)}, http.StatusOK)
 }
 
-func (h *AdminHandler) revokeToken(w http.ResponseWriter, r *http.Request, path string) {
+func (h *AdminHandler) revokeToken(w http.ResponseWriter, r *http.Request, path string, p models.Principal) {
+	if !h.requireTokenOwner(w, r, p, tokenIDFromPath(path)) {
+		return
+	}
 	if err := h.access.Store().RevokeToken(r.Context(), tokenIDFromPath(path)); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -554,6 +621,9 @@ func (h *AdminHandler) revokeToken(w http.ResponseWriter, r *http.Request, path 
 
 func (h *AdminHandler) rotateToken(w http.ResponseWriter, r *http.Request, path string, p models.Principal) {
 	oldID := tokenIDFromPath(path)
+	if !h.requireTokenOwner(w, r, p, oldID) {
+		return
+	}
 	scopes, _ := h.access.Store().TokenStorages(r.Context(), oldID)
 	var mcpScopes []models.AccessTokenMCPServer
 	if h.mcpStore != nil {
@@ -709,4 +779,30 @@ func isPlatformAdmin(p models.Principal) bool {
 
 func canEditUser(p models.Principal, user models.User) bool {
 	return isPlatformAdmin(p) || user.SubjectKey == models.SubjectKeyForPrincipal(p)
+}
+
+// canManageToken reports whether the principal may mutate the given token:
+// either a platform admin, or the token's owner.
+func (h *AdminHandler) canManageToken(r *http.Request, p models.Principal, tokenID string) (bool, error) {
+	if isPlatformAdmin(p) {
+		return true, nil
+	}
+	t, ok, err := h.access.Store().GetToken(r.Context(), tokenID)
+	if err != nil || !ok {
+		return false, err
+	}
+	return t.OwnerSubjectKey == models.SubjectKeyForPrincipal(p), nil
+}
+
+func (h *AdminHandler) requireTokenOwner(w http.ResponseWriter, r *http.Request, p models.Principal, tokenID string) bool {
+	ok, err := h.canManageToken(r, p, tokenID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return false
+	}
+	if !ok {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return false
+	}
+	return true
 }

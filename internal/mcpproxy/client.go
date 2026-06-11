@@ -7,18 +7,23 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sync"
 	"sync/atomic"
 	"time"
 
-	"github.com/zmiishe/synamcps/internal/models"
+	"github.com/synamcps/synamcps-server/internal/models"
 )
 
 type upstreamClient struct {
 	httpClient *http.Client
 	url        string
 	headers    map[string]string
-	sessionID  string
-	reqID      atomic.Int64
+
+	mu        sync.Mutex // guards sessionID against concurrent calls reusing this client
+	sessionID string
+
+	reqID     atomic.Int64
+	createdAt time.Time
 }
 
 func newUpstreamClient(url string, headers map[string]string, timeout time.Duration) *upstreamClient {
@@ -26,7 +31,23 @@ func newUpstreamClient(url string, headers map[string]string, timeout time.Durat
 		httpClient: &http.Client{Timeout: timeout},
 		url:        url,
 		headers:    headers,
+		createdAt:  time.Now(),
 	}
+}
+
+func (c *upstreamClient) getSessionID() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.sessionID
+}
+
+func (c *upstreamClient) setSessionID(id string) {
+	if id == "" {
+		return
+	}
+	c.mu.Lock()
+	c.sessionID = id
+	c.mu.Unlock()
 }
 
 func (c *upstreamClient) call(ctx context.Context, method string, params map[string]any) (map[string]any, error) {
@@ -52,8 +73,8 @@ func (c *upstreamClient) call(ctx context.Context, method string, params map[str
 	for k, v := range c.headers {
 		req.Header.Set(k, v)
 	}
-	if c.sessionID != "" {
-		req.Header.Set("Mcp-Session-Id", c.sessionID)
+	if sid := c.getSessionID(); sid != "" {
+		req.Header.Set("Mcp-Session-Id", sid)
 	}
 	res, err := c.httpClient.Do(req)
 	if err != nil {
@@ -67,9 +88,7 @@ func (c *upstreamClient) call(ctx context.Context, method string, params map[str
 	if res.StatusCode >= 400 {
 		return nil, fmt.Errorf("upstream http %d: %s", res.StatusCode, string(respBody))
 	}
-	if sid := res.Header.Get("Mcp-Session-Id"); sid != "" {
-		c.sessionID = sid
-	}
+	c.setSessionID(res.Header.Get("Mcp-Session-Id"))
 	var resp map[string]any
 	if err := json.Unmarshal(respBody, &resp); err != nil {
 		return nil, fmt.Errorf("decode upstream response: %w", err)
@@ -98,7 +117,7 @@ func (c *upstreamClient) initialize(ctx context.Context) error {
 		return err
 	}
 	if sid, _ := result["sessionId"].(string); sid != "" {
-		c.sessionID = sid
+		c.setSessionID(sid)
 	}
 	_, _ = c.call(ctx, "notifications/initialized", nil)
 	return nil

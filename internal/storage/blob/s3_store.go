@@ -11,7 +11,7 @@ import (
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
 
-	"github.com/zmiishe/synamcps/internal/config"
+	"github.com/synamcps/synamcps-server/internal/config"
 )
 
 type Store struct {

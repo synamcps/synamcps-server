@@ -8,7 +8,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/zmiishe/synamcps/internal/models"
+	"github.com/synamcps/synamcps-server/internal/models"
 )
 
 type MCPScopeLoader interface {
@@ -91,12 +91,18 @@ func (s *Service) CanAccessStorage(ctx context.Context, p models.Principal, toke
 	if storageID == "" {
 		return models.EffectiveAccess{}, false, errors.New("storage id is required")
 	}
-	subjectKeys := SubjectKeys(p)
-	acl, err := s.store.ACLForSubject(ctx, subjectKeys)
+	acl, err := s.store.ACLForSubject(ctx, SubjectKeys(p))
 	if err != nil {
 		return models.EffectiveAccess{}, false, err
 	}
+	eff, ok := evaluateStorageAccess(p, token, tokenScopes, acl, storageID, permission)
+	return eff, ok, nil
+}
 
+// evaluateStorageAccess computes the caller's effective access to a single
+// storage from a pre-loaded ACL set (no DB access), so callers that need many
+// storages can load the ACL once and avoid N+1 queries.
+func evaluateStorageAccess(p models.Principal, token *models.AccessToken, tokenScopes []models.AccessTokenStorage, acl []models.ACLBinding, storageID string, permission models.StoragePermission) (models.EffectiveAccess, bool) {
 	userPerms := map[models.StoragePermission]struct{}{}
 	for _, b := range acl {
 		if b.StorageID != storageID {
@@ -114,11 +120,6 @@ func (s *Service) CanAccessStorage(ctx context.Context, p models.Principal, toke
 			if scope.StorageID == storageID {
 				mode = intersectMode(token.Mode, scope.MaxMode)
 				break
-			}
-		}
-		for _, perm := range ModePermissions(mode) {
-			if _, ok := userPerms[perm]; ok {
-				continue
 			}
 		}
 	} else {
@@ -157,7 +158,7 @@ func (s *Service) CanAccessStorage(ctx context.Context, p models.Principal, toke
 		out.Permissions = append(out.Permissions, perm)
 	}
 	_, ok := effective[permission]
-	return out, ok, nil
+	return out, ok
 }
 
 func (s *Service) AvailableStorages(ctx context.Context, p models.Principal, token *models.AccessToken, tokenScopes []models.AccessTokenStorage) ([]models.Storage, map[string]models.EffectiveAccess, error) {
@@ -165,19 +166,40 @@ func (s *Service) AvailableStorages(ctx context.Context, p models.Principal, tok
 	if err != nil {
 		return nil, nil, err
 	}
+	acl, err := s.store.ACLForSubject(ctx, SubjectKeys(p))
+	if err != nil {
+		return nil, nil, err
+	}
 	out := []models.Storage{}
 	accessByStorage := map[string]models.EffectiveAccess{}
 	for _, st := range all {
-		eff, ok, err := s.CanAccessStorage(ctx, p, token, tokenScopes, st.ID, models.PermissionStorageRead)
-		if err != nil {
-			return nil, nil, err
-		}
+		eff, ok := evaluateStorageAccess(p, token, tokenScopes, acl, st.ID, models.PermissionStorageRead)
 		if ok {
 			out = append(out, st)
 			accessByStorage[st.ID] = eff
 		}
 	}
 	return out, accessByStorage, nil
+}
+
+// ReadableStorageIDs returns the set of storage IDs the caller can read
+// documents from, computed with a single ACL load (no per-storage query).
+func (s *Service) ReadableStorageIDs(ctx context.Context, p models.Principal, token *models.AccessToken, tokenScopes []models.AccessTokenStorage) (map[string]struct{}, error) {
+	all, err := s.store.ListStorages(ctx)
+	if err != nil {
+		return nil, err
+	}
+	acl, err := s.store.ACLForSubject(ctx, SubjectKeys(p))
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]struct{}, len(all))
+	for _, st := range all {
+		if _, ok := evaluateStorageAccess(p, token, tokenScopes, acl, st.ID, models.PermissionDocumentRead); ok {
+			out[st.ID] = struct{}{}
+		}
+	}
+	return out, nil
 }
 
 func intersectMode(a, b models.AccessMode) models.AccessMode {

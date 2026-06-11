@@ -17,7 +17,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"golang.org/x/crypto/bcrypt"
 
-	"github.com/zmiishe/synamcps/internal/models"
+	"github.com/synamcps/synamcps-server/internal/models"
 )
 
 type Store struct {
@@ -975,8 +975,26 @@ func (s *Store) ResolveToken(ctx context.Context, raw string) (models.AccessToke
 	if err != nil {
 		return models.AccessToken{}, nil, true, err
 	}
-	_ = s.MarkTokenUsed(ctx, token.ID)
+	// Avoid a DB write on every single request: only refresh last_used_at when
+	// it is stale. This trades a little precision for a large drop in write load.
+	if token.LastUsedAt == nil || time.Since(*token.LastUsedAt) > time.Minute {
+		_ = s.MarkTokenUsed(ctx, token.ID)
+	}
 	return token, scopes, true, nil
+}
+
+func (s *Store) GetToken(ctx context.Context, tokenID string) (models.AccessToken, bool, error) {
+	if tokenID == "" {
+		return models.AccessToken{}, false, nil
+	}
+	if s.useDB {
+		row := s.pool.QueryRow(ctx, `SELECT id, owner_subject_key, token_hash, name, mode, allowed_permissions, rate_limit_enabled, rate_limit_rpm, rate_limit_rph, rate_limit_rpd, burst_limit, expires_at, revoked_at, last_used_at, COALESCE(created_by,''), created_at FROM access_tokens WHERE id=$1`, tokenID)
+		return scanToken(row)
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	t, ok := s.tokens[tokenID]
+	return t, ok, nil
 }
 
 func (s *Store) ListTokens(ctx context.Context) ([]models.AccessToken, error) {
