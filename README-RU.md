@@ -65,6 +65,7 @@ go run ./cmd/server
   - принадлежат пользователю (owner)
   - **не расширяют**, а *сужают* права владельца: пересечение ACL пользователя и scopes токена
   - могут ограничивать: `storageIds`, `maxMode` (read/read_write), `toolAllowlist`, rate limits.
+- **Видимость документов** (`personal`/`group`/`public`) проверяется поверх доступа к storage: доступа на чтение storage недостаточно — `personal`-документ виден только владельцу, `group`-документ — владельцу или участникам его групп.
 
 ### Knowledge items
 
@@ -72,19 +73,21 @@ go run ./cmd/server
   - **Text** (через стандартный `POST /api/knowledge`)
   - **File** (upload → raw сохраняется в S3 → best-effort extraction → summary+embeddings → item в storage)
   - **Link** (download → raw в S3 → extraction → summary+embeddings → item в storage)
+- **Link**-ingest принимает только `http`/`https` URL и отказывается ходить на внутренние адреса (loopback, link-local, включая cloud-metadata `169.254.169.254`, и приватные диапазоны) — защита от SSRF, работающая в том числе при редиректах.
 
 ### MCP
 
 - MCP предоставляет **динамический tools/list** на основе bearer-токена (видны только разрешённые инструменты/хранилища).
 - Поддерживается **Streamable HTTP** транспорт (`/mcp`) и опционально legacy SSE.
 - Имена MCP tools используют `_` (underscore), чтобы избежать фильтрации/варнингов у некоторых клиентов.
-- **MCP proxy**: upstream HTTP/SSE серверы в Admin UI (вкладка MCP Servers), discovery tools/resources/prompts, ACL и per-token scopes. Идентификаторы: `{slug}__{name}`, resources: `syna-mcp/{slug}/{uri}`. Секреты шифруются в Postgres (`MCP_PROXY_SECRETS_KEY`).
+- **MCP proxy**: upstream HTTP/SSE серверы в Admin UI (вкладка MCP Servers), discovery tools/resources/prompts, ACL и per-token scopes. Идентификаторы: `{slug}__{name}`, resources: `syna-mcp/{slug}/{uri}` (`slug` генерируется автоматически из имени сервера). Секреты шифруются в Postgres (`MCP_PROXY_SECRETS_KEY`).
 
 ### Usage / Rate limit / Metrics
 
-- Rate limiting per token (минуты/часы/дни + burst).
+- Rate limiting per token (минуты/часы/дни + burst), применяется **и** к MCP-вызовам, **и** к REST API (`429 Too Many Requests` при превышении).
+- Размер тела запроса ограничен `limits.max_upload_bytes` (`413` при превышении).
 - Usage события (и статус/ошибки) могут писаться в Redis TimeSeries (если включено).
-- `/metrics` отдаёт Prometheus-формат метрик.
+- `/metrics` отдаёт Prometheus-формат метрик (значения лейблов экранируются, кардинальность серий ограничена).
 
 ### Web Admin UI
 
@@ -96,6 +99,8 @@ go run ./cmd/server
 - Add item (Text/File/Link)
 - Search (по token / по storage)
 - Status (Postgres/Redis/S3/LLMs + error counters)
+
+Формы выбирают сущности из **выпадающих списков с именами** (storages/groups/users/tokens/MCP servers) с кнопками обновления — вместо ручного ввода ID. Slug больше не вводится руками: у storage он по умолчанию равен id, у MCP-сервера генерируется уникальным из имени.
 
 ---
 
@@ -133,7 +138,9 @@ go run ./cmd/server
 - `401` — нет токена/сессии
 - `403` — forbidden (не хватает прав на storage/операцию)
 - `404` — not found
+- `413` — тело запроса превышает `limits.max_upload_bytes`
 - `422` — invalid request
+- `429` — превышен rate limit (лимиты per-token)
 
 ### Knowledge API
 
@@ -275,27 +282,30 @@ Body:
 - `GET /api/admin/groups` (platform_admin)
 - `POST /api/admin/groups` (platform_admin)
 - `DELETE /api/admin/groups/{id}` (platform_admin)
-- `GET /api/admin/groups/{id}/members`
-- `PUT /api/admin/groups/{id}/members/{userId}`
-- `DELETE /api/admin/groups/{id}/members/{userId}`
+- `GET /api/admin/groups/{id}/members` (platform_admin)
+- `PUT /api/admin/groups/{id}/members/{userId}` (platform_admin)
+- `DELETE /api/admin/groups/{id}/members/{userId}` (platform_admin)
 
 ### Storages
 
 - `GET /api/admin/storages` (доступные storages для текущего пользователя)
 - `POST /api/admin/storages`
-- `DELETE /api/admin/storages/{id}`
-- `GET /api/admin/storages/{id}` (storage details: storage + acl + tokens)
-- `GET /api/admin/storages/{id}/acl`
-- `PUT /api/admin/storages/{id}/acl`
+- `DELETE /api/admin/storages/{id}` (требует `storage.delete`: owner/admin storage или platform_admin)
+- `GET /api/admin/storages/{id}` (storage details: storage + acl + tokens; требует доступ на чтение)
+- `GET /api/admin/storages/{id}/acl` (требует `acl.manage`)
+- `PUT /api/admin/storages/{id}/acl` (требует `acl.manage`)
 
 ### Tokens
 
+Изменяющие endpoints требуют, чтобы вызывающий был **владельцем токена или platform_admin**; `GET /api/admin/tokens` отдаёт только собственные токены (platform_admin видит все).
+
 - `GET /api/admin/tokens`
 - `POST /api/admin/tokens`
-- `DELETE /api/admin/tokens/{id}`
-- `PATCH /api/admin/tokens/{id}/rate-limit`
-- `POST /api/admin/tokens/{id}/revoke`
-- `POST /api/admin/tokens/{id}/rotate`
+- `DELETE /api/admin/tokens/{id}` (owner/platform_admin)
+- `PATCH /api/admin/tokens/{id}/rate-limit` (owner/platform_admin)
+- `POST /api/admin/tokens/{id}/revoke` (owner/platform_admin)
+- `POST /api/admin/tokens/{id}/rotate` (owner/platform_admin)
+- `PATCH /api/admin/tokens/{id}/mcp-scopes` (owner/platform_admin)
 - `GET/POST /api/admin/tokens/{id}/connect-options` (wizard для MCP клиентов)
 
 ### Usage / Status
@@ -326,11 +336,15 @@ curl -X POST http://localhost:8080/mcp \
 ```
 
 3) Сохранить `Mcp-Session-Id` из заголовка/ответа (клиент делает это автоматически)  
-4) Открыть stream:
+4) Открыть stream (bearer-токен обязателен и должен совпадать с владельцем сессии):
 
 ```bash
-curl -N http://localhost:8080/mcp -H "Mcp-Session-Id: <session_id>"
+curl -N http://localhost:8080/mcp \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Mcp-Session-Id: <session_id>"
 ```
+
+`GET /mcp` и `DELETE /mcp` аутентифицируются; сессию может читать/закрывать только создавший её principal.
 
 ### Dynamic tools/list
 
