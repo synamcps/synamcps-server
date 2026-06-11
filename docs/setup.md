@@ -25,6 +25,8 @@ Key sections:
 - `vector_backend.active`: `pgvector` or `qdrant`
 - `api.allowed_origins`: strict CORS allowlist (unknown origins are rejected)
 - `redis`: session backend settings (`addr`, `password`, `db`, key prefix, TTL)
+- `limits.max_upload_bytes`: max request body size for the REST API (oversized bodies get `413`; default ~40 MiB)
+- `usage`: per-token rate limits (minute/hour/day + burst), retention and exporters
 
 ## Stop
 

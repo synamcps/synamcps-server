@@ -65,6 +65,7 @@ go run ./cmd/server
   - belong to a user (owner)
   - **do not expand** permissions — they *narrow* the owner's access (intersection of user ACL and token scopes)
   - can restrict: `storageIds`, `maxMode` (read/read_write), `toolAllowlist`, rate limits.
+- **Document visibility** (`personal`/`group`/`public`) is enforced on top of storage access: being able to read a storage is necessary but not sufficient — a `personal` document is visible only to its owner, a `group` document only to its owner or members of its groups.
 
 ### Knowledge items
 
@@ -72,6 +73,7 @@ go run ./cmd/server
   - **Text** (via the standard `POST /api/knowledge`)
   - **File** (upload → raw stored to S3 → best-effort extraction → summary+embeddings → item saved to storage)
   - **Link** (download → raw stored to S3 → extraction → summary+embeddings → item saved to storage)
+- **Link** ingestion only accepts `http`/`https` URLs and refuses to fetch internal addresses (loopback, link-local incl. cloud metadata `169.254.169.254`, and private ranges) — SSRF protection that also applies across redirects.
 
 ### MCP
 
@@ -81,13 +83,15 @@ go run ./cmd/server
 - **MCP proxy**: register upstream HTTP/SSE MCP servers in Admin UI (`MCP Servers` tab), discover tools/resources/prompts, restrict by ACL and per-token scopes. Proxied identifiers:
   - tools/prompts: `{slug}__{upstream_name}`
   - resources: `syna-mcp/{slug}/{upstream_uri}`
+  - the `slug` is generated automatically from the server name (no manual entry).
 - Upstream auth secrets are stored **encrypted in Postgres** (`MCP_PROXY_SECRETS_KEY` in `.env`).
 
 ### Usage / Rate limit / Metrics
 
-- Rate limiting per token (minute/hour/day + burst).
+- Rate limiting per token (minute/hour/day + burst), enforced for **both** MCP calls and the REST API (`429 Too Many Requests` when exceeded).
+- Request bodies are capped by `limits.max_upload_bytes` (`413` when exceeded).
 - Usage events (and status/errors) can be written to Redis TimeSeries (when enabled).
-- `/metrics` exposes Prometheus-format metrics.
+- `/metrics` exposes Prometheus-format metrics (label values are sanitized and series cardinality is bounded).
 
 ### Web Admin UI
 
@@ -99,6 +103,8 @@ The built-in admin UI (server-rendered HTML) lets you:
 - Add item (Text/File/Link)
 - Search (by token / by storage)
 - Status (Postgres/Redis/S3/LLMs + error counters)
+
+Forms pick entities from **name dropdowns** (storages/groups/users/tokens/MCP servers) with refresh buttons instead of typing raw IDs. Slugs are no longer entered by hand — a storage defaults its slug to its id and an MCP server derives a unique slug from its name.
 
 ---
 
@@ -136,7 +142,9 @@ Common error codes:
 - `401` — missing token/session
 - `403` — forbidden (insufficient permissions for the storage/operation)
 - `404` — not found
+- `413` — request body exceeds `limits.max_upload_bytes`
 - `422` — invalid request
+- `429` — rate limit exceeded (per-token limits)
 
 ### Knowledge API
 
@@ -278,28 +286,31 @@ All endpoints require authentication (cookie or bearer), and many require `platf
 - `GET /api/admin/groups` (platform_admin)
 - `POST /api/admin/groups` (platform_admin)
 - `DELETE /api/admin/groups/{id}` (platform_admin)
-- `GET /api/admin/groups/{id}/members`
-- `PUT /api/admin/groups/{id}/members/{userId}`
-- `DELETE /api/admin/groups/{id}/members/{userId}`
+- `GET /api/admin/groups/{id}/members` (platform_admin)
+- `PUT /api/admin/groups/{id}/members/{userId}` (platform_admin)
+- `DELETE /api/admin/groups/{id}/members/{userId}` (platform_admin)
 
 ### Storages
 
 - `GET /api/admin/storages` (storages available to the current user)
 - `POST /api/admin/storages`
-- `DELETE /api/admin/storages/{id}`
-- `GET /api/admin/storages/{id}` (storage details: storage + acl + tokens)
-- `GET /api/admin/storages/{id}/acl`
-- `PUT /api/admin/storages/{id}/acl`
+- `DELETE /api/admin/storages/{id}` (requires `storage.delete`: storage owner/admin or platform_admin)
+- `GET /api/admin/storages/{id}` (storage details: storage + acl + tokens; requires read access)
+- `GET /api/admin/storages/{id}/acl` (requires `acl.manage`)
+- `PUT /api/admin/storages/{id}/acl` (requires `acl.manage`)
 
 ### Tokens
 
+Mutating token endpoints require the caller to be the **token owner or platform_admin**; `GET /api/admin/tokens` lists only the caller's own tokens (platform_admin sees all).
+
 - `GET /api/admin/tokens`
 - `POST /api/admin/tokens`
-- `DELETE /api/admin/tokens/{id}`
-- `PATCH /api/admin/tokens/{id}/rate-limit`
-- `POST /api/admin/tokens/{id}/revoke`
-- `POST /api/admin/tokens/{id}/rotate`
-- `GET/POST /api/admin/tokens/{id}/connect-options` (wizard для MCP клиентов)
+- `DELETE /api/admin/tokens/{id}` (owner/platform_admin)
+- `PATCH /api/admin/tokens/{id}/rate-limit` (owner/platform_admin)
+- `POST /api/admin/tokens/{id}/revoke` (owner/platform_admin)
+- `POST /api/admin/tokens/{id}/rotate` (owner/platform_admin)
+- `PATCH /api/admin/tokens/{id}/mcp-scopes` (owner/platform_admin)
+- `GET/POST /api/admin/tokens/{id}/connect-options` (wizard for MCP clients)
 
 ### Usage / Status
 
@@ -329,11 +340,15 @@ curl -X POST http://localhost:8080/mcp \
 ```
 
 3) Save `Mcp-Session-Id` from headers/response (clients do this automatically)  
-4) Open the stream:
+4) Open the stream (the bearer token is required and must match the session owner):
 
 ```bash
-curl -N http://localhost:8080/mcp -H "Mcp-Session-Id: <session_id>"
+curl -N http://localhost:8080/mcp \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Mcp-Session-Id: <session_id>"
 ```
+
+`GET /mcp` and `DELETE /mcp` are authenticated; a session can only be read/closed by the principal that created it.
 
 ### Dynamic tools/list
 

@@ -30,6 +30,36 @@ paths:
       responses:
         "201":
           description: created
+        "413":
+          description: request body exceeds limits.max_upload_bytes
+        "429":
+          description: rate limit exceeded
+  /api/knowledge/ingest/file:
+    post:
+      summary: Ingest a file (multipart/form-data)
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "201":
+          description: created
+        "413":
+          description: request body exceeds limits.max_upload_bytes
+        "429":
+          description: rate limit exceeded
+  /api/knowledge/ingest/link:
+    post:
+      summary: Ingest a URL (http/https only; internal addresses are refused)
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "201":
+          description: created
+        "422":
+          description: invalid or unsupported URL
+        "429":
+          description: rate limit exceeded
   /api/knowledge/search:
     post:
       security:
@@ -38,6 +68,8 @@ paths:
       responses:
         "200":
           description: search hits
+        "429":
+          description: rate limit exceeded
   /api/knowledge/{docId}:
     parameters:
       - in: path

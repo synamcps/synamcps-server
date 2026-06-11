@@ -30,3 +30,5 @@ If request token matches issuer/audience, auth source is `teleport_proxy`.
 
 - user delegated tokens are supported
 - service tokens should be scope-limited (`knowledge.read`, `knowledge.write`, `knowledge.search`, `knowledge.delete`)
+- managing a token (delete/revoke/rotate/rate-limit/mcp-scopes) requires being the token **owner** or `platform_admin`
+- storage ACL changes require `acl.manage` on that storage; group membership changes require `platform_admin`

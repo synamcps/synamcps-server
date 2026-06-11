@@ -25,10 +25,14 @@ curl -X POST http://localhost:8080/mcp \
 ```
 
 3. Save returned `Mcp-Session-Id`.
-4. Open SSE stream:
+4. Open SSE stream. `GET /mcp` (and `DELETE /mcp`) are authenticated, and the
+   session can only be accessed by the principal that created it, so send the
+   bearer token alongside the session id:
 
 ```bash
-curl -N http://localhost:8080/mcp -H "Mcp-Session-Id: <session_id>"
+curl -N http://localhost:8080/mcp \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Mcp-Session-Id: <session_id>"
 ```
 
 ## Legacy HTTP+SSE
@@ -40,6 +44,7 @@ If `transport.legacy_sse=true`:
 
 ## Troubleshooting
 
-- `401`: missing/invalid token
-- `403`: issuer/audience/scope/policy mismatch
+- `401`: missing/invalid token (including on `GET`/`DELETE /mcp`)
+- `403`: issuer/audience/scope/policy mismatch, or the session belongs to a different principal
 - `404` on `/mcp` stream: expired or unknown session ID
+- `429`: per-token rate limit exceeded
