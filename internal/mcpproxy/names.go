@@ -58,3 +58,25 @@ func FilterAllowlist(items []string, allowlist []string) []string {
 }
 
 var ErrUnknownProxyTarget = errors.New("unknown proxied mcp target")
+
+// Slugify turns an arbitrary name into a URL/namespace-safe slug consisting of
+// lowercase alphanumerics separated by single dashes. It never contains "__" or
+// "/", so it is safe to use in NamespacedTool/NamespacedResourceURI.
+func Slugify(s string) string {
+	s = strings.ToLower(strings.TrimSpace(s))
+	var b strings.Builder
+	prevDash := false
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
+			b.WriteRune(r)
+			prevDash = false
+		default:
+			if !prevDash && b.Len() > 0 {
+				b.WriteByte('-')
+				prevDash = true
+			}
+		}
+	}
+	return strings.Trim(b.String(), "-")
+}

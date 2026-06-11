@@ -2,17 +2,62 @@ package httpapi
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"mime"
+	"net"
 	"net/http"
 	"net/url"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/zmiishe/synamcps/internal/knowledge"
 	"github.com/zmiishe/synamcps/internal/models"
 )
+
+// isDisallowedIP reports whether an IP must not be reached by server-side
+// fetches (SSRF guard): loopback, link-local (incl. cloud metadata
+// 169.254.169.254), multicast, unspecified and private/ULA ranges.
+func isDisallowedIP(ip net.IP) bool {
+	if ip == nil {
+		return true
+	}
+	return ip.IsLoopback() ||
+		ip.IsLinkLocalUnicast() ||
+		ip.IsLinkLocalMulticast() ||
+		ip.IsMulticast() ||
+		ip.IsUnspecified() ||
+		ip.IsPrivate()
+}
+
+// ssrfSafeClient returns an HTTP client whose dialer refuses connections to
+// internal addresses. The Control hook runs after DNS resolution with the
+// concrete IP, so it also covers redirects and DNS-rebinding.
+func ssrfSafeClient(timeout time.Duration) *http.Client {
+	dialer := &net.Dialer{
+		Timeout: timeout,
+		Control: func(_, address string, _ syscall.RawConn) error {
+			host, _, err := net.SplitHostPort(address)
+			if err != nil {
+				return err
+			}
+			ip := net.ParseIP(host)
+			if ip == nil {
+				return fmt.Errorf("cannot resolve address %q", host)
+			}
+			if isDisallowedIP(ip) {
+				return fmt.Errorf("address %s is not allowed", ip)
+			}
+			return nil
+		},
+	}
+	return &http.Client{
+		Timeout:   timeout,
+		Transport: &http.Transport{DialContext: dialer.DialContext},
+	}
+}
 
 type IngestHandler struct {
 	service *knowledge.Service
@@ -123,8 +168,12 @@ func (h *IngestHandler) IngestLink(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid url", http.StatusUnprocessableEntity)
 		return
 	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		http.Error(w, "unsupported url scheme", http.StatusUnprocessableEntity)
+		return
+	}
 
-	client := &http.Client{Timeout: 30 * time.Second}
+	client := ssrfSafeClient(30 * time.Second)
 	resp, err := client.Get(u.String())
 	if err != nil {
 		http.Error(w, "failed to download", http.StatusBadRequest)

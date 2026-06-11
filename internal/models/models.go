@@ -473,6 +473,15 @@ type PageRequest struct {
 	Source        string `json:"source,omitempty"`
 	SourceURL     string `json:"sourceUrl,omitempty"`
 	SourceURLMode string `json:"sourceUrlMode,omitempty"`
+
+	// Server-side access filters. These are populated by the service layer from
+	// the caller's effective access — never from client input (json:"-") — so the
+	// catalog can apply authorization and visibility inside the SQL query,
+	// keeping pagination counts correct and avoiding per-row permission queries.
+	AllowedStorageIDs  []string `json:"-"`
+	ApplyVisibility    bool     `json:"-"`
+	VisibilityOwnerIDs []string `json:"-"`
+	VisibilityGroups   []string `json:"-"`
 }
 
 type PaginatedKnowledgeList struct {

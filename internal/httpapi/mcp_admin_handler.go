@@ -269,6 +269,9 @@ func (h *AdminHandler) patchTokenMCPScopes(w http.ResponseWriter, r *http.Reques
 		http.Error(w, "mcp proxy is not configured", http.StatusServiceUnavailable)
 		return
 	}
+	if !h.requireTokenOwner(w, r, p, tokenID) {
+		return
+	}
 	var req struct {
 		Scopes []models.AccessTokenMCPServer `json:"mcpServers"`
 	}

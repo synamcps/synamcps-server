@@ -119,7 +119,7 @@ func main() {
 		"blob":     blobStore,
 	}))
 	statusHandler := httpapi.NewStatusHandler(cfg, usageService, catalog, sessions, blobStore)
-	apiRouter := httpapi.NewRouterWithAdmin(gateway, sessions, knowledgeService, accessService, usageService, cfg.S3.Bucket, cfg.Search.Filters.SourceURL.AllowPartialMatch, statusHandler, mcpStore, mcpManager, mcpAccess)
+	apiRouter := httpapi.NewRouterWithAdmin(gateway, sessions, knowledgeService, accessService, usageService, cfg.S3.Bucket, cfg.Search.Filters.SourceURL.AllowPartialMatch, statusHandler, mcpStore, mcpManager, mcpAccess, cfg.Limits.MaxUploadBytes)
 	rootMux.Handle("/api/", apiRouter)
 	rootMux.HandleFunc("/api/capabilities", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

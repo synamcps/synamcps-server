@@ -8,6 +8,7 @@ import (
 
 	"github.com/zmiishe/synamcps/internal/auth"
 	"github.com/zmiishe/synamcps/internal/mcp"
+	"github.com/zmiishe/synamcps/internal/models"
 	"github.com/zmiishe/synamcps/internal/session"
 )
 
@@ -23,8 +24,8 @@ func NewHandler(server *mcp.Server, gateway *auth.Gateway, sessions *session.Sto
 
 func (h *Handler) Register(mux *http.ServeMux) {
 	mux.Handle("POST /mcp", h.gateway.Middleware(http.HandlerFunc(h.post)))
-	mux.Handle("GET /mcp", http.HandlerFunc(h.get))
-	mux.Handle("DELETE /mcp", http.HandlerFunc(h.deleteSession))
+	mux.Handle("GET /mcp", h.gateway.Middleware(http.HandlerFunc(h.get)))
+	mux.Handle("DELETE /mcp", h.gateway.Middleware(http.HandlerFunc(h.deleteSession)))
 }
 
 func (h *Handler) post(w http.ResponseWriter, r *http.Request) {
@@ -54,13 +55,25 @@ func (h *Handler) post(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
+	p, ok := auth.PrincipalFromContext(r.Context())
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
 	sessionID := r.Header.Get("Mcp-Session-Id")
 	if sessionID == "" {
 		http.Error(w, "missing Mcp-Session-Id", http.StatusBadRequest)
 		return
 	}
-	if _, ok := h.sessions.GetMCPSession(sessionID); !ok {
+	sess, ok := h.sessions.GetMCPSession(sessionID)
+	if !ok {
 		http.Error(w, "invalid session", http.StatusNotFound)
+		return
+	}
+	// The session must belong to the authenticated caller, otherwise anyone
+	// holding a session id could read another principal's event stream.
+	if models.SubjectKeyForPrincipal(sess.Principal) != models.SubjectKeyForPrincipal(p) {
+		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
 

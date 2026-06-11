@@ -12,10 +12,10 @@ import (
 )
 
 func NewRouter(gateway *auth.Gateway, sessions *session.Store, service *knowledge.Service, allowPartial bool) http.Handler {
-	return NewRouterWithAdmin(gateway, sessions, service, nil, nil, "", allowPartial, nil, nil, nil, nil)
+	return NewRouterWithAdmin(gateway, sessions, service, nil, nil, "", allowPartial, nil, nil, nil, nil, 0)
 }
 
-func NewRouterWithAdmin(gateway *auth.Gateway, sessions *session.Store, service *knowledge.Service, accessService *access.Service, usageService *usage.Service, s3Bucket string, allowPartial bool, statusHandler *StatusHandler, mcpStore *mcpproxy.Store, mcpManager *mcpproxy.Manager, mcpAccess *mcpproxy.AccessService) http.Handler {
+func NewRouterWithAdmin(gateway *auth.Gateway, sessions *session.Store, service *knowledge.Service, accessService *access.Service, usageService *usage.Service, s3Bucket string, allowPartial bool, statusHandler *StatusHandler, mcpStore *mcpproxy.Store, mcpManager *mcpproxy.Manager, mcpAccess *mcpproxy.AccessService, maxBodyBytes int64) http.Handler {
 	mux := http.NewServeMux()
 	authResolver := NewAuthResolver(gateway, sessions)
 	handler := NewKnowledgeHandler(service, allowPartial)
@@ -29,14 +29,17 @@ func NewRouterWithAdmin(gateway *auth.Gateway, sessions *session.Store, service 
 		}
 	}
 	ingestHandler := NewIngestHandler(service)
-	mux.Handle("GET /api/knowledge", authResolver.Middleware(http.HandlerFunc(handler.List)))
-	mux.Handle("POST /api/knowledge", authResolver.Middleware(http.HandlerFunc(handler.Create("api"))))
-	mux.Handle("POST /api/admin/knowledge", authResolver.Middleware(http.HandlerFunc(handler.Create("admin"))))
-	mux.Handle("POST /api/knowledge/ingest/file", authResolver.Middleware(http.HandlerFunc(ingestHandler.IngestFile)))
-	mux.Handle("POST /api/knowledge/ingest/link", authResolver.Middleware(http.HandlerFunc(ingestHandler.IngestLink)))
-	mux.Handle("POST /api/knowledge/search", authResolver.Middleware(http.HandlerFunc(handler.Search)))
-	mux.Handle("GET /api/knowledge/", authResolver.Middleware(http.HandlerFunc(handler.Get)))
-	mux.Handle("DELETE /api/knowledge/", authResolver.Middleware(http.HandlerFunc(handler.Delete)))
+	guard := func(h http.HandlerFunc) http.Handler {
+		return maxBodyMiddleware(maxBodyBytes, authResolver.Middleware(rateLimitMiddleware(usageService, h)))
+	}
+	mux.Handle("GET /api/knowledge", guard(handler.List))
+	mux.Handle("POST /api/knowledge", guard(handler.Create("api")))
+	mux.Handle("POST /api/admin/knowledge", guard(handler.Create("admin")))
+	mux.Handle("POST /api/knowledge/ingest/file", guard(ingestHandler.IngestFile))
+	mux.Handle("POST /api/knowledge/ingest/link", guard(ingestHandler.IngestLink))
+	mux.Handle("POST /api/knowledge/search", guard(handler.Search))
+	mux.Handle("GET /api/knowledge/", guard(handler.Get))
+	mux.Handle("DELETE /api/knowledge/", guard(handler.Delete))
 
 	return mux
 }

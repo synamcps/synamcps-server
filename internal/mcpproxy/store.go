@@ -154,8 +154,11 @@ CREATE TABLE IF NOT EXISTS access_token_mcp_servers (
 
 func (s *Store) CreateServer(ctx context.Context, in CreateServerInput) (models.MCPServer, error) {
 	now := time.Now().UTC()
-	if in.Slug == "" || in.URL == "" {
-		return models.MCPServer{}, errors.New("slug and url are required")
+	if in.URL == "" {
+		return models.MCPServer{}, errors.New("url is required")
+	}
+	if in.Slug == "" {
+		in.Slug = s.deriveServerSlug(ctx, in.Name)
 	}
 	if in.Transport == "" {
 		in.Transport = models.MCPTransportAuto
@@ -373,6 +376,23 @@ status, last_connected_at, last_error, created_at, updated_at FROM mcp_servers W
 		srv.HasAuthSecret = true
 	}
 	return srv, nil
+}
+
+// deriveServerSlug builds a unique slug from the server name (falling back to
+// "mcp") so operators no longer have to enter one by hand.
+func (s *Store) deriveServerSlug(ctx context.Context, name string) string {
+	base := Slugify(name)
+	if base == "" {
+		base = "mcp"
+	}
+	candidate := base
+	for i := 0; i < 50; i++ {
+		if _, err := s.GetServerBySlug(ctx, candidate); err != nil {
+			return candidate // not found -> available
+		}
+		candidate = base + "-" + uuid.NewString()[:6]
+	}
+	return base + "-" + uuid.NewString()[:8]
 }
 
 func (s *Store) GetServerBySlug(ctx context.Context, slug string) (models.MCPServer, error) {

@@ -122,10 +122,19 @@ func (s *Store) List(_ context.Context, page models.PageRequest) (models.Paginat
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
+	allowed := map[string]struct{}{}
+	for _, id := range page.AllowedStorageIDs {
+		allowed[id] = struct{}{}
+	}
 	items := make([]models.DocumentRecord, 0, len(s.docs))
 	for _, d := range s.docs {
 		if page.StorageID != "" && d.StorageID != page.StorageID {
 			continue
+		}
+		if len(allowed) > 0 {
+			if _, ok := allowed[d.StorageID]; !ok {
+				continue
+			}
 		}
 		if page.Source != "" && d.Source != page.Source {
 			continue
@@ -138,6 +147,9 @@ func (s *Store) List(_ context.Context, page models.PageRequest) (models.Paginat
 			} else if d.SourceURL != page.SourceURL {
 				continue
 			}
+		}
+		if page.ApplyVisibility && !visibleInMemory(d, page.VisibilityOwnerIDs, page.VisibilityGroups) {
+			continue
 		}
 		items = append(items, d)
 	}
@@ -213,6 +225,42 @@ func defaultStorageID(id string) string {
 		return "legacy"
 	}
 	return id
+}
+
+// visibleInMemory mirrors the SQL visibility predicate for the in-memory store.
+func visibleInMemory(d models.DocumentRecord, owners, groups []string) bool {
+	switch d.Visibility {
+	case models.VisibilityPublic:
+		return true
+	case models.VisibilityPersonal:
+		return containsStr(owners, d.OwnerID)
+	case models.VisibilityGroup:
+		return containsStr(owners, d.OwnerID) || overlaps(d.GroupIDs, groups)
+	default:
+		return true
+	}
+}
+
+func containsStr(list []string, v string) bool {
+	for _, item := range list {
+		if item == v {
+			return true
+		}
+	}
+	return false
+}
+
+func overlaps(a, b []string) bool {
+	set := make(map[string]struct{}, len(a))
+	for _, v := range a {
+		set[v] = struct{}{}
+	}
+	for _, v := range b {
+		if _, ok := set[v]; ok {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Store) saveDB(ctx context.Context, doc models.DocumentRecord) error {
@@ -298,6 +346,24 @@ func (s *Store) listDB(ctx context.Context, page models.PageRequest) (models.Pag
 		where += fmt.Sprintf(" AND storage_id=$%d", argn)
 		args = append(args, page.StorageID)
 		argn++
+	}
+	if len(page.AllowedStorageIDs) > 0 {
+		where += fmt.Sprintf(" AND storage_id = ANY($%d)", argn)
+		args = append(args, page.AllowedStorageIDs)
+		argn++
+	}
+	if page.ApplyVisibility {
+		owners := page.VisibilityOwnerIDs
+		if owners == nil {
+			owners = []string{}
+		}
+		groups := page.VisibilityGroups
+		if groups == nil {
+			groups = []string{}
+		}
+		where += fmt.Sprintf(" AND (visibility = 'public' OR visibility NOT IN ('public','personal','group') OR (visibility = 'personal' AND owner_id = ANY($%d)) OR (visibility = 'group' AND (owner_id = ANY($%d) OR group_ids && $%d)))", argn, argn+1, argn+2)
+		args = append(args, owners, owners, groups)
+		argn += 3
 	}
 
 	countSQL := "SELECT count(1) FROM knowledge_documents WHERE " + where

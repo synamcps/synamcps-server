@@ -280,8 +280,9 @@ pre{background:#020617;padding:12px;border-radius:8px;overflow:auto}
 <input id="groupName" placeholder="group name"/><button onclick="createGroup()">Create group</button>
 <div class="card">
 <b>Group members</b><br/>
-<input id="memberGroupId" placeholder="group id"/>
-<input id="memberUserId" placeholder="user id"/>
+<label>Group <select id="memberGroupId" style="min-width:240px"></select></label>
+<label>User <select id="memberUserId" style="min-width:240px"></select></label>
+<button onclick="loadGroups();loadUsers()">Refresh lists</button>
 <button onclick="loadGroupMembers()">Load members</button>
 <button onclick="addGroupMember()">Add user</button>
 <button onclick="removeGroupMember()">Remove user</button>
@@ -290,15 +291,17 @@ pre{background:#020617;padding:12px;border-radius:8px;overflow:auto}
 <div id="groupsOut"></div></section>
 
 <section id="storages"><h2>Storages</h2>
-<input id="storageSlug" placeholder="slug"/><input id="storageName" placeholder="name"/>
+<input id="storageName" placeholder="name"/>
 <select id="storageVisibility"><option>personal</option><option>group</option><option>public</option></select>
 <button onclick="createStorage()">Create storage</button>
+<button onclick="loadStorages()">Refresh</button>
 <div id="storagesOut"></div></section>
 
 <section id="storage"><h2>Storage</h2>
 <div class="card">
 <b>Selected storage</b><br/>
-<input id="currentStorageId" placeholder="storage id" style="width:420px"/>
+<select id="currentStorageId" style="width:420px"></select>
+<button onclick="loadStorages()">Refresh</button>
 <button onclick="loadStorageDetails()">Load</button>
 <label style="margin-left:10px">Page <input id="storageItemsPage" value="1" size="4"/></label>
 <label>Page size <input id="storageItemsPageSize" value="20" size="4"/></label>
@@ -339,13 +342,14 @@ pre{background:#020617;padding:12px;border-radius:8px;overflow:auto}
 </section>
 
 <section id="tokens"><h2>Tokens</h2>
-<input id="tokenName" placeholder="token name"/><input id="tokenStorageIds" placeholder="storage ids, comma-separated"/>
+<input id="tokenName" placeholder="token name"/><label>Storages <select id="tokenStorageIds" multiple size="4" style="min-width:240px;vertical-align:top"></select></label><button onclick="loadStorages()" style="vertical-align:top">Refresh storages</button>
 <select id="tokenMode"><option value="read">read</option><option value="read_write">read_write</option></select>
 <input id="tokenRpm" placeholder="rpm" size="5"/><input id="tokenRph" placeholder="rph" size="5"/><input id="tokenRpd" placeholder="rpd" size="5"/>
 <label>MCP scopes JSON <input id="tokenMcpScopesJson" placeholder='[{"serverId":"...","toolAllowlist":[]}]' style="width:520px"/></label>
 <button onclick="createToken()">Create token</button>
 <div class="card"><b>Edit token MCP scopes</b><br/>
-<input id="tokenMcpScopesTokenId" placeholder="token id" style="width:420px"/>
+<label>Token <select id="tokenMcpScopesTokenId" style="width:420px"></select></label>
+<button onclick="loadTokens()">Refresh</button>
 <button onclick="saveTokenMcpScopes()">Save MCP scopes</button>
 </div>
 <div id="rawTokenBox" class="card" style="display:none"><b>Raw token is shown once:</b><pre id="rawToken"></pre></div>
@@ -353,7 +357,6 @@ pre{background:#020617;padding:12px;border-radius:8px;overflow:auto}
 
 <section id="mcpServers"><h2>MCP Servers (proxy)</h2>
 <div class="card">
-<input id="mcpSlug" placeholder="slug"/>
 <input id="mcpName" placeholder="name"/>
 <input id="mcpUrl" placeholder="upstream URL" style="width:420px"/>
 <select id="mcpTransport"><option value="auto">auto</option><option value="http">http</option><option value="sse">sse</option></select>
@@ -362,13 +365,15 @@ pre{background:#020617;padding:12px;border-radius:8px;overflow:auto}
 <input id="mcpAuthSecret" type="password" placeholder="auth secret"/>
 <input id="mcpHeadersJson" placeholder='headers JSON {"X-Custom":"v"}' style="width:420px"/>
 <button onclick="createMcpServer()">Create MCP server</button>
+<button onclick="loadMcpServers()">Refresh</button>
 </div>
 <div id="mcpServersOut"></div>
 </section>
 
 <section id="mcpServerDetail"><h2>MCP Server</h2>
 <div class="card">
-<input id="currentMcpServerId" placeholder="server id" style="width:420px"/>
+<label>Server <select id="currentMcpServerId" style="width:420px"></select></label>
+<button onclick="loadMcpServers()">Refresh</button>
 <button onclick="loadMcpServerDetails()">Load</button>
 <button onclick="connectTestMcpServer()">Test connection</button>
 </div>
@@ -387,7 +392,8 @@ pre{background:#020617;padding:12px;border-radius:8px;overflow:auto}
 <pre id="usageOut"></pre></section>
 
 <section id="connect"><h2>MCP Connect</h2>
-<input id="connectTokenId" placeholder="token id"/>
+<label>Token <select id="connectTokenId" style="min-width:240px"></select></label>
+<button onclick="loadTokens()">Refresh</button>
 <input id="connectRawToken" placeholder="raw token, only available after create/rotate" style="width:420px"/>
 <select id="connectClient"><option value="cursor">Cursor</option><option value="claude_desktop">Claude Desktop</option><option value="claude_code">Claude Code</option><option value="continue">Continue</option><option value="cline">Cline</option><option value="generic">Generic MCP</option></select>
 <button onclick="connectConfig()">Generate config</button>
@@ -418,7 +424,7 @@ function table(rows){if(!rows||!rows.length)return '<p>No data</p>';const keys=O
 function escapeHtml(s){return s.replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 function actionButton(label, fn){return '<button onclick="'+fn+'">'+label+'</button>'}
 function renderRows(rows, actions){if(!rows||!rows.length)return '<p>No data</p>';const keys=Object.keys(rows[0]);return '<table><thead><tr>'+keys.map(k=>'<th>'+k+'</th>').join('')+'<th>actions</th></tr></thead><tbody>'+rows.map(r=>'<tr>'+keys.map(k=>'<td>'+escapeHtml(JSON.stringify(r[k]??''))+'</td>').join('')+'<td>'+actions(r)+'</td></tr>').join('')+'</tbody></table>'}
-async function loadUsers(){const data=await api('/api/admin/users');document.getElementById('usersOut').innerHTML=renderRows(data,r=>actionButton('Edit',"editUser('"+r.id+"')")+actionButton('Delete',"deleteUser('"+r.id+"')"))}
+async function loadUsers(){const data=await api('/api/admin/users');window.users=Array.isArray(data)?data:[];document.getElementById('usersOut').innerHTML=renderRows(window.users,r=>actionButton('Edit',"editUser('"+r.id+"')")+actionButton('Delete',"deleteUser('"+r.id+"')"));fillUserSelect()}
 async function createUser(){const body={email:userEmail.value,displayName:userDisplayName.value,externalSubject:userExternalSubject.value||userEmail.value,source:userSource.value,status:'active'};await api('/api/admin/users',{method:'POST',body:JSON.stringify(body)});loadUsers()}
 async function editOwnUser(){const me=await api('/api/admin/me');if(me.id){openUserEditor(me)}else{editUserOut.textContent=JSON.stringify(me,null,2);showTab('editUser')}}
 async function editUser(id){const data=await api('/api/admin/users/'+id);if(data.id)openUserEditor(data);else{editUserOut.textContent=JSON.stringify(data,null,2);showTab('editUser')}}
@@ -426,7 +432,7 @@ function openUserEditor(user){editUserId.value=user.id;editUserEmail.value=user.
 async function saveUserEdit(){const body={email:editUserEmail.value,displayName:editUserDisplayName.value,status:editUserStatus.value};const data=await api('/api/admin/users/'+editUserId.value,{method:'PATCH',body:JSON.stringify(body)});editUserOut.textContent=JSON.stringify(data,null,2);loadUsers()}
 async function changeUserPassword(){const body={currentPassword:editCurrentPassword.value,newPassword:editNewPassword.value};const data=await api('/api/admin/users/'+editUserId.value+'/password',{method:'POST',body:JSON.stringify(body)});editUserOut.textContent=JSON.stringify(data,null,2);editCurrentPassword.value='';editNewPassword.value=''}
 async function deleteUser(id){if(confirm('Delete user '+id+'?')){await api('/api/admin/users/'+id,{method:'DELETE'});loadUsers()}}
-async function loadGroups(){const data=await api('/api/admin/groups');document.getElementById('groupsOut').innerHTML=renderRows(data,r=>actionButton('Members',"selectGroup('"+r.id+"')")+actionButton('Delete',"deleteGroup('"+r.id+"')"))}
+async function loadGroups(){const data=await api('/api/admin/groups');window.groups=Array.isArray(data)?data:[];document.getElementById('groupsOut').innerHTML=renderRows(window.groups,r=>actionButton('Members',"selectGroup('"+r.id+"')")+actionButton('Delete',"deleteGroup('"+r.id+"')"));fillGroupSelect()}
 async function createGroup(){await api('/api/admin/groups',{method:'POST',body:JSON.stringify({name:document.getElementById('groupName').value})});loadGroups()}
 function selectGroup(id){memberGroupId.value=id;loadGroupMembers()}
 async function deleteGroup(id){if(confirm('Delete group '+id+'?')){await api('/api/admin/groups/'+id,{method:'DELETE'});loadGroups();groupMembersOut.innerHTML=''}}
@@ -484,15 +490,47 @@ function fillSearchTokenSelect(){
   if(current) sel.value=current;
 }
 
+// fillSelectGeneric (re)populates a <select> with id-valued options labelled by
+// name, preserving the current selection. Supports an empty placeholder and
+// multi-select. Used so admins pick entities by name instead of typing ids.
+function fillSelectGeneric(selectId, items, label, opts){
+  const sel=document.getElementById(selectId);
+  if(!sel) return;
+  opts=opts||{};
+  const prev=opts.multi?Array.from(sel.selectedOptions).map(o=>o.value):sel.value;
+  sel.innerHTML='';
+  if(opts.placeholder){
+    const o=document.createElement('option');o.value='';o.textContent=opts.placeholder;sel.appendChild(o);
+  }
+  (Array.isArray(items)?items:[]).forEach(it=>{
+    const o=document.createElement('option');
+    o.value=it.id;
+    o.textContent=label(it);
+    sel.appendChild(o);
+  });
+  if(opts.multi){
+    const set=new Set(Array.isArray(prev)?prev:[]);
+    Array.from(sel.options).forEach(o=>{if(o.value&&set.has(o.value))o.selected=true;});
+  }else if(prev){ sel.value=prev; }
+}
+function storageLabel(s){return (s.name||s.slug||s.id)+' ('+s.id+')';}
+function tokenLabel(t){return (t.name||t.id)+' ('+t.id+')';}
+function fillStorageDetailSelect(){fillSelectGeneric('currentStorageId',window.storages,storageLabel,{placeholder:'(select storage)'});}
+function fillTokenStorageSelect(){fillSelectGeneric('tokenStorageIds',window.storages,storageLabel,{multi:true});}
+function fillTokenSelects(){fillSelectGeneric('tokenMcpScopesTokenId',window.tokens,tokenLabel,{placeholder:'(select token)'});fillSelectGeneric('connectTokenId',window.tokens,tokenLabel,{placeholder:'(select token)'});}
+function fillMcpServerSelect(){fillSelectGeneric('currentMcpServerId',window.mcpServers,s=>(s.name||s.slug||s.id)+' ('+s.id+')',{placeholder:'(select server)'});}
+function fillGroupSelect(){fillSelectGeneric('memberGroupId',window.groups,g=>(g.name||g.id)+' ('+g.id+')',{placeholder:'(select group)'});}
+function fillUserSelect(){fillSelectGeneric('memberUserId',window.users,u=>(u.email||u.displayName||u.externalSubject||u.id)+' ('+u.id+')',{placeholder:'(select user)'});}
+
 async function refreshAddStorages(){await loadStorages();fillStorageSelect();}
-async function loadStorages(){const data=await api('/api/admin/storages');window.storages=data;document.getElementById('storagesOut').innerHTML=renderRows(data,r=>actionButton('Open',"openStorage('"+r.id+"')")+actionButton('Delete',"deleteStorage('"+r.id+"')"));fillStorageSelect();fillSearchStorageSelect()}
-async function createStorage(){await api('/api/admin/storages',{method:'POST',body:JSON.stringify({slug:storageSlug.value,name:storageName.value,visibility:storageVisibility.value})});loadStorages()}
+async function loadStorages(){const data=await api('/api/admin/storages');window.storages=Array.isArray(data)?data:[];document.getElementById('storagesOut').innerHTML=renderRows(window.storages,r=>actionButton('Open',"openStorage('"+r.id+"')")+actionButton('Delete',"deleteStorage('"+r.id+"')"));fillStorageSelect();fillSearchStorageSelect();fillStorageDetailSelect();fillTokenStorageSelect()}
+async function createStorage(){await api('/api/admin/storages',{method:'POST',body:JSON.stringify({name:storageName.value,visibility:storageVisibility.value})});loadStorages()}
 async function deleteStorage(id){if(confirm('Delete storage '+id+'?')){await api('/api/admin/storages/'+id,{method:'DELETE'});loadStorages()}}
-async function loadTokens(){const data=await api('/api/admin/tokens');window.tokens=data;document.getElementById('tokensOut').innerHTML=renderRows(data,r=>actionButton('Connect',"connectTokenId.value='"+r.id+"';showTab('connect')")+actionButton('Delete',"deleteToken('"+r.id+"')"));fillSearchTokenSelect()}
-async function createToken(){const storageIds=tokenStorageIds.value.split(',').map(s=>s.trim()).filter(Boolean);const body={name:tokenName.value,mode:tokenMode.value,storageIds,rateLimit:{enabled:true,requestsPerMinute:Number(tokenRpm.value||0),requestsPerHour:Number(tokenRph.value||0),requestsPerDay:Number(tokenRpd.value||0)}};if(tokenMcpScopesJson.value.trim()){try{body.mcpServers=JSON.parse(tokenMcpScopesJson.value)}catch(e){alert('Invalid MCP scopes JSON');return}}const data=await api('/api/admin/tokens',{method:'POST',body:JSON.stringify(body)});if(data.rawToken){rawTokenBox.style.display='block';rawToken.textContent=data.rawToken;connectRawToken.value=data.rawToken;if(data.token)connectTokenId.value=data.token.id}loadTokens()}
+async function loadTokens(){const data=await api('/api/admin/tokens');window.tokens=Array.isArray(data)?data:[];document.getElementById('tokensOut').innerHTML=renderRows(window.tokens,r=>actionButton('Connect',"connectTokenId.value='"+r.id+"';showTab('connect')")+actionButton('Delete',"deleteToken('"+r.id+"')"));fillSearchTokenSelect();fillTokenSelects()}
+async function createToken(){const storageIds=Array.from(document.getElementById('tokenStorageIds').selectedOptions).map(o=>o.value).filter(Boolean);const body={name:tokenName.value,mode:tokenMode.value,storageIds,rateLimit:{enabled:true,requestsPerMinute:Number(tokenRpm.value||0),requestsPerHour:Number(tokenRph.value||0),requestsPerDay:Number(tokenRpd.value||0)}};if(tokenMcpScopesJson.value.trim()){try{body.mcpServers=JSON.parse(tokenMcpScopesJson.value)}catch(e){alert('Invalid MCP scopes JSON');return}}const data=await api('/api/admin/tokens',{method:'POST',body:JSON.stringify(body)});if(data.rawToken){rawTokenBox.style.display='block';rawToken.textContent=data.rawToken;connectRawToken.value=data.rawToken}await loadTokens();if(data&&data.token&&data.token.id)connectTokenId.value=data.token.id}
 async function saveTokenMcpScopes(){const id=tokenMcpScopesTokenId.value.trim();if(!id){alert('token id required');return}let mcpServers=[];if(tokenMcpScopesJson.value.trim()){try{mcpServers=JSON.parse(tokenMcpScopesJson.value)}catch(e){alert('Invalid MCP scopes JSON');return}}const data=await api('/api/admin/tokens/'+encodeURIComponent(id)+'/mcp-scopes',{method:'PATCH',body:JSON.stringify({mcpServers})});alert(JSON.stringify(data,null,2))}
-async function loadMcpServers(){const data=await api('/api/admin/mcp-servers');window.mcpServers=data;document.getElementById('mcpServersOut').innerHTML=renderRows(data,r=>actionButton('Open',"openMcpServer('"+r.id+"')")+actionButton('Delete',"deleteMcpServer('"+r.id+"')"))}
-async function createMcpServer(){const body={slug:mcpSlug.value,name:mcpName.value,url:mcpUrl.value,transport:mcpTransport.value,authType:mcpAuthType.value,authHeaderName:mcpAuthHeader.value,authSecret:mcpAuthSecret.value,headersJson:mcpHeadersJson.value||'{}'};const data=await api('/api/admin/mcp-servers',{method:'POST',body:JSON.stringify(body)});mcpServerDetailOut.textContent=JSON.stringify(data,null,2);if(data.id){openMcpServer(data.id)}loadMcpServers()}
+async function loadMcpServers(){const data=await api('/api/admin/mcp-servers');window.mcpServers=Array.isArray(data)?data:[];document.getElementById('mcpServersOut').innerHTML=renderRows(window.mcpServers,r=>actionButton('Open',"openMcpServer('"+r.id+"')")+actionButton('Delete',"deleteMcpServer('"+r.id+"')"));fillMcpServerSelect()}
+async function createMcpServer(){const body={name:mcpName.value,url:mcpUrl.value,transport:mcpTransport.value,authType:mcpAuthType.value,authHeaderName:mcpAuthHeader.value,authSecret:mcpAuthSecret.value,headersJson:mcpHeadersJson.value||'{}'};const data=await api('/api/admin/mcp-servers',{method:'POST',body:JSON.stringify(body)});mcpServerDetailOut.textContent=JSON.stringify(data,null,2);if(data.id){openMcpServer(data.id)}loadMcpServers()}
 function openMcpServer(id){currentMcpServerId.value=id;showTab('mcpServerDetail');loadMcpServerDetails()}
 async function deleteMcpServer(id){if(confirm('Delete MCP server '+id+'?')){await api('/api/admin/mcp-servers/'+id,{method:'DELETE'});loadMcpServers()}}
 async function loadMcpServerDetails(){const id=(currentMcpServerId.value||'').trim();if(!id)return;const data=await api('/api/admin/mcp-servers/'+encodeURIComponent(id));mcpServerInfoOut.textContent=JSON.stringify(data.server||data,null,2);renderMcpCapabilities(data)}

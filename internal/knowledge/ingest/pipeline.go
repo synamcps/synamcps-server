@@ -44,6 +44,13 @@ func NewPipeline(
 	}
 }
 
+// Embed produces an embedding for a query using the same provider used at
+// indexing time, so search operates in a consistent vector space.
+func (p *Pipeline) Embed(ctx context.Context, text string) ([]float32, error) {
+	vec, _, err := p.embedder.Embed(ctx, text)
+	return vec, err
+}
+
 type SaveRequest struct {
 	Principal  models.Principal
 	StorageID  string

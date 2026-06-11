@@ -7,6 +7,7 @@ import (
 	"github.com/zmiishe/synamcps/internal/auth"
 	"github.com/zmiishe/synamcps/internal/models"
 	"github.com/zmiishe/synamcps/internal/session"
+	"github.com/zmiishe/synamcps/internal/usage"
 )
 
 type AuthResolver struct {
@@ -45,6 +46,49 @@ func principalFromRequest(r *http.Request) (models.Principal, bool) {
 	return auth.PrincipalFromContext(r.Context())
 }
 
+// rateLimitMiddleware enforces per-token rate limits on the REST API for
+// requests authenticated with an access token. It must run after the auth
+// middleware so the access context is populated. Requests authenticated via web
+// session / JWT (no access token) are not throttled here. Fails closed if the
+// rate limiter backend errors.
+func rateLimitMiddleware(usageService *usage.Service, next http.Handler) http.Handler {
+	if usageService == nil {
+		return next
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if ac, ok := auth.AccessContextFromContext(r.Context()); ok && ac.AccessToken != nil {
+			allowed, err := usageService.Allow(r.Context(), *ac.AccessToken, "")
+			if err != nil {
+				http.Error(w, "rate limiter unavailable", http.StatusServiceUnavailable)
+				return
+			}
+			if !allowed {
+				http.Error(w, "rate limit exceeded", http.StatusTooManyRequests)
+				return
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 func isMutatingMethod(method string) bool {
 	return method == http.MethodPost || method == http.MethodPut || method == http.MethodPatch || method == http.MethodDelete
+}
+
+// defaultMaxBodyBytes bounds request bodies when no explicit limit is
+// configured (covers 32 MiB uploads plus multipart overhead).
+const defaultMaxBodyBytes int64 = 40 << 20
+
+// maxBodyMiddleware caps the size of request bodies to avoid unbounded memory
+// use from large JSON payloads or uploads.
+func maxBodyMiddleware(limit int64, next http.Handler) http.Handler {
+	if limit <= 0 {
+		limit = defaultMaxBodyBytes
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Body != nil {
+			r.Body = http.MaxBytesReader(w, r.Body, limit)
+		}
+		next.ServeHTTP(w, r)
+	})
 }
