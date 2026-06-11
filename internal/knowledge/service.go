@@ -5,13 +5,13 @@ import (
 	"errors"
 	"strings"
 
-	"github.com/zmiishe/synamcps/internal/access"
-	"github.com/zmiishe/synamcps/internal/auth"
-	"github.com/zmiishe/synamcps/internal/knowledge/ingest"
-	"github.com/zmiishe/synamcps/internal/models"
-	"github.com/zmiishe/synamcps/internal/policy"
-	"github.com/zmiishe/synamcps/internal/storage/meta"
-	"github.com/zmiishe/synamcps/internal/storage/vector"
+	"github.com/synamcps/synamcps-server/internal/access"
+	"github.com/synamcps/synamcps-server/internal/auth"
+	"github.com/synamcps/synamcps-server/internal/knowledge/ingest"
+	"github.com/synamcps/synamcps-server/internal/models"
+	"github.com/synamcps/synamcps-server/internal/policy"
+	"github.com/synamcps/synamcps-server/internal/storage/meta"
+	"github.com/synamcps/synamcps-server/internal/storage/vector"
 )
 
 type Service struct {

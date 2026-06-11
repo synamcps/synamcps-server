@@ -8,8 +8,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/zmiishe/synamcps/internal/config"
-	"github.com/zmiishe/synamcps/internal/models"
+	"github.com/synamcps/synamcps-server/internal/config"
+	"github.com/synamcps/synamcps-server/internal/models"
 )
 
 type Manager struct {

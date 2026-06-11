@@ -4,7 +4,7 @@ import (
 	"context"
 	"strings"
 
-	"github.com/zmiishe/synamcps/internal/config"
+	"github.com/synamcps/synamcps-server/internal/config"
 )
 
 type Summarizer interface {

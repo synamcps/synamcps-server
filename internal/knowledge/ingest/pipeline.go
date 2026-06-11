@@ -9,12 +9,12 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/zmiishe/synamcps/internal/config"
-	"github.com/zmiishe/synamcps/internal/llm"
-	"github.com/zmiishe/synamcps/internal/models"
-	"github.com/zmiishe/synamcps/internal/storage/blob"
-	"github.com/zmiishe/synamcps/internal/storage/meta"
-	"github.com/zmiishe/synamcps/internal/storage/vector"
+	"github.com/synamcps/synamcps-server/internal/config"
+	"github.com/synamcps/synamcps-server/internal/llm"
+	"github.com/synamcps/synamcps-server/internal/models"
+	"github.com/synamcps/synamcps-server/internal/storage/blob"
+	"github.com/synamcps/synamcps-server/internal/storage/meta"
+	"github.com/synamcps/synamcps-server/internal/storage/vector"
 )
 
 type Pipeline struct {

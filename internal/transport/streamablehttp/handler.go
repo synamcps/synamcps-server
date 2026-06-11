@@ -6,10 +6,10 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/zmiishe/synamcps/internal/auth"
-	"github.com/zmiishe/synamcps/internal/mcp"
-	"github.com/zmiishe/synamcps/internal/models"
-	"github.com/zmiishe/synamcps/internal/session"
+	"github.com/synamcps/synamcps-server/internal/auth"
+	"github.com/synamcps/synamcps-server/internal/mcp"
+	"github.com/synamcps/synamcps-server/internal/models"
+	"github.com/synamcps/synamcps-server/internal/session"
 )
 
 type Handler struct {

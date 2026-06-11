@@ -12,9 +12,9 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/zmiishe/synamcps/internal/models"
-	"github.com/zmiishe/synamcps/internal/storage/vector"
-	"github.com/zmiishe/synamcps/internal/storage/vector/pgvector"
+	"github.com/synamcps/synamcps-server/internal/models"
+	"github.com/synamcps/synamcps-server/internal/storage/vector"
+	"github.com/synamcps/synamcps-server/internal/storage/vector/pgvector"
 )
 
 type Store struct {

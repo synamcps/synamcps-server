@@ -4,8 +4,8 @@ import (
 	"context"
 	"slices"
 
-	"github.com/zmiishe/synamcps/internal/access"
-	"github.com/zmiishe/synamcps/internal/models"
+	"github.com/synamcps/synamcps-server/internal/access"
+	"github.com/synamcps/synamcps-server/internal/models"
 )
 
 func MCPServerRolePermissions(role models.MCPServerRole) []models.MCPServerPermission {

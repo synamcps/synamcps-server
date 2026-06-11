@@ -3,8 +3,8 @@ package unit
 import (
 	"testing"
 
-	"github.com/zmiishe/synamcps/internal/models"
-	"github.com/zmiishe/synamcps/internal/policy"
+	"github.com/synamcps/synamcps-server/internal/models"
+	"github.com/synamcps/synamcps-server/internal/policy"
 )
 
 func TestCanReadPersonal(t *testing.T) {

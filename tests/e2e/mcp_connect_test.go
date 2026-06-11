@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/zmiishe/synamcps/internal/config"
-	"github.com/zmiishe/synamcps/internal/web"
+	"github.com/synamcps/synamcps-server/internal/config"
+	"github.com/synamcps/synamcps-server/internal/web"
 )
 
 func TestMCPConnectPageAvailable(t *testing.T) {

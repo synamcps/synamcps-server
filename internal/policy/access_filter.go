@@ -1,6 +1,6 @@
 package policy
 
-import "github.com/zmiishe/synamcps/internal/models"
+import "github.com/synamcps/synamcps-server/internal/models"
 
 func CanRead(p models.Principal, d models.DocumentRecord) bool {
 	switch d.Visibility {

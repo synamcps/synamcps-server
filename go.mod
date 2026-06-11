@@ -1,4 +1,4 @@
-module github.com/zmiishe/synamcps
+module github.com/synamcps/synamcps-server
 
 go 1.23.0
 

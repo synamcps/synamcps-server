@@ -7,13 +7,13 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/zmiishe/synamcps/internal/access"
-	"github.com/zmiishe/synamcps/internal/auth"
-	"github.com/zmiishe/synamcps/internal/knowledge"
-	"github.com/zmiishe/synamcps/internal/mcpproxy"
-	"github.com/zmiishe/synamcps/internal/models"
-	"github.com/zmiishe/synamcps/internal/session"
-	"github.com/zmiishe/synamcps/internal/usage"
+	"github.com/synamcps/synamcps-server/internal/access"
+	"github.com/synamcps/synamcps-server/internal/auth"
+	"github.com/synamcps/synamcps-server/internal/knowledge"
+	"github.com/synamcps/synamcps-server/internal/mcpproxy"
+	"github.com/synamcps/synamcps-server/internal/models"
+	"github.com/synamcps/synamcps-server/internal/session"
+	"github.com/synamcps/synamcps-server/internal/usage"
 )
 
 type Server struct {

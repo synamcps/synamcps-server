@@ -4,10 +4,10 @@ import (
 	"context"
 	"net/http"
 
-	"github.com/zmiishe/synamcps/internal/auth"
-	"github.com/zmiishe/synamcps/internal/models"
-	"github.com/zmiishe/synamcps/internal/session"
-	"github.com/zmiishe/synamcps/internal/usage"
+	"github.com/synamcps/synamcps-server/internal/auth"
+	"github.com/synamcps/synamcps-server/internal/models"
+	"github.com/synamcps/synamcps-server/internal/session"
+	"github.com/synamcps/synamcps-server/internal/usage"
 )
 
 type AuthResolver struct {

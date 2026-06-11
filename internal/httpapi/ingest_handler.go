@@ -13,8 +13,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/zmiishe/synamcps/internal/knowledge"
-	"github.com/zmiishe/synamcps/internal/models"
+	"github.com/synamcps/synamcps-server/internal/knowledge"
+	"github.com/synamcps/synamcps-server/internal/models"
 )
 
 // isDisallowedIP reports whether an IP must not be reached by server-side

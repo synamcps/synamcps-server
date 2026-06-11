@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/zmiishe/synamcps/internal/config"
-	"github.com/zmiishe/synamcps/internal/usage"
+	"github.com/synamcps/synamcps-server/internal/config"
+	"github.com/synamcps/synamcps-server/internal/usage"
 )
 
 type pinger interface {

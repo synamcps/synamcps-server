@@ -8,7 +8,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/zmiishe/synamcps/internal/models"
+	"github.com/synamcps/synamcps-server/internal/models"
 )
 
 type MCPScopeLoader interface {
