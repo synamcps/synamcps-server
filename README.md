@@ -415,6 +415,7 @@ Web UI routes (`/`, `/login`, `/logout`, `/app*`) bypass the origin check.
 
 ## Documentation in this repo
 
+- `docs/marketing.md` — product overview + corporate RAG / agentic pipeline scenarios
 - `docs/setup.md` — installation and run
 - `docs/api.md` — basic knowledge endpoints
 - `docs/mcp-connection.md` — MCP connection
