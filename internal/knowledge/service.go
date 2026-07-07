@@ -13,23 +13,25 @@ import (
 )
 
 type Service struct {
-	catalog     meta.Catalog
-	vectorStore vector.Store
-	pipeline    *ingest.Pipeline
-	access      *access.Service
-	s3Bucket    string
+	catalog      meta.Catalog
+	vectorStore  vector.Store
+	pipeline     *ingest.Pipeline
+	access       *access.Service
+	s3Bucket     string
+	ingestWorker *ingest.Worker
 }
 
-func NewService(c meta.Catalog, v vector.Store, p *ingest.Pipeline, accessService *access.Service, s3Bucket string) (*Service, error) {
+func NewService(c meta.Catalog, v vector.Store, p *ingest.Pipeline, accessService *access.Service, s3Bucket string, worker *ingest.Worker) (*Service, error) {
 	if accessService == nil {
 		return nil, errors.New("access service is required")
 	}
 	return &Service{
-		catalog:     c,
-		vectorStore: v,
-		pipeline:    p,
-		access:      accessService,
-		s3Bucket:    s3Bucket,
+		catalog:      c,
+		vectorStore:  v,
+		pipeline:     p,
+		access:       accessService,
+		s3Bucket:     s3Bucket,
+		ingestWorker: worker,
 	}, nil
 }
 
@@ -245,10 +247,17 @@ func (s *Service) Delete(ctx context.Context, p models.Principal, ac models.APIA
 	if !access.CanDeleteDocument(p, doc) {
 		return domainerr.ErrForbidden
 	}
-	if err := s.vectorStore.DeleteByDocID(ctx, id); err != nil {
+	doc.Status = models.DocumentStatusDeleting
+	if err := s.catalog.Save(ctx, doc); err != nil {
 		return err
 	}
-	return s.catalog.Delete(ctx, id)
+	if err := s.catalog.Delete(ctx, id); err != nil {
+		return err
+	}
+	if s.ingestWorker != nil {
+		return s.ingestWorker.EnqueueDelete(ctx, id)
+	}
+	return s.vectorStore.DeleteByDocID(ctx, id)
 }
 
 func (s *Service) Search(ctx context.Context, p models.Principal, ac models.APIAccessContext, req models.SearchRequest, allowPartial bool) ([]models.SearchHit, error) {
@@ -279,10 +288,31 @@ func (s *Service) Search(ctx context.Context, p models.Principal, ac models.APIA
 		return nil, err
 	}
 
+	docIDs := make([]string, 0, len(recs))
+	seen := map[string]struct{}{}
+	for _, r := range recs {
+		id := r.Payload.DocID
+		if id == "" {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		docIDs = append(docIDs, id)
+	}
+	docsByID, err := s.catalog.GetMany(ctx, docIDs)
+	if err != nil {
+		return nil, err
+	}
+
 	hits := make([]models.SearchHit, 0, len(recs))
 	for _, r := range recs {
-		doc, ok, err := s.catalog.Get(ctx, r.Payload.DocID)
-		if err != nil || !ok {
+		doc, ok := docsByID[r.Payload.DocID]
+		if !ok {
+			continue
+		}
+		if doc.Status != "" && doc.Status != models.DocumentStatusReady {
 			continue
 		}
 		if !s.canReadDocCached(p, doc, readable) {

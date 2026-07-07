@@ -599,6 +599,101 @@ func (s *Store) ListStorages(ctx context.Context) ([]models.Storage, error) {
 	return out, nil
 }
 
+// AccessibleStorageFilter narrows storage listing to candidates that may be
+// accessible before evaluateStorageAccess applies role/token rules.
+type AccessibleStorageFilter struct {
+	SubjectKeys     []string
+	PlatformAdmin   bool
+	HasToken        bool
+	TokenStorageIDs []string
+}
+
+func (s *Store) ListAccessibleStorages(ctx context.Context, f AccessibleStorageFilter) ([]models.Storage, error) {
+	if f.HasToken && len(f.TokenStorageIDs) == 0 {
+		return nil, nil
+	}
+	if s.useDB {
+		return s.listAccessibleStoragesDB(ctx, f)
+	}
+	return s.listAccessibleStoragesMemory(f), nil
+}
+
+func (s *Store) listAccessibleStoragesDB(ctx context.Context, f AccessibleStorageFilter) ([]models.Storage, error) {
+	const q = `
+SELECT s.id, s.slug, s.name, s.owner_subject_key, s.visibility, s.default_access, s.storage_kind, COALESCE(s.s3_bucket,''), s.s3_prefix, s.status, s.created_at, s.updated_at, s.archived_at
+FROM storages s
+WHERE
+  ($1::bool AND NOT $2::bool)
+  OR (
+    EXISTS (
+      SELECT 1 FROM storage_acl_bindings b
+      WHERE b.storage_id = s.id
+        AND b.subject_key = ANY($3::text[])
+        AND (b.expires_at IS NULL OR b.expires_at > NOW())
+    )
+    AND (NOT $2::bool OR s.id = ANY($4::text[]))
+  )
+ORDER BY s.updated_at DESC`
+	rows, err := s.pool.Query(ctx, q, f.PlatformAdmin, f.HasToken, f.SubjectKeys, f.TokenStorageIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []models.Storage
+	for rows.Next() {
+		st, _, err := scanStorage(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, st)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) listAccessibleStoragesMemory(f AccessibleStorageFilter) []models.Storage {
+	subjectSet := make(map[string]struct{}, len(f.SubjectKeys))
+	for _, key := range f.SubjectKeys {
+		subjectSet[key] = struct{}{}
+	}
+	tokenSet := make(map[string]struct{}, len(f.TokenStorageIDs))
+	for _, id := range f.TokenStorageIDs {
+		tokenSet[id] = struct{}{}
+	}
+
+	candidateIDs := map[string]struct{}{}
+	now := time.Now().UTC()
+
+	if !f.HasToken && f.PlatformAdmin {
+		for id := range s.storages {
+			candidateIDs[id] = struct{}{}
+		}
+	} else {
+		for _, b := range s.acl {
+			if _, ok := subjectSet[b.SubjectKey]; !ok {
+				continue
+			}
+			if b.ExpiresAt != nil && !b.ExpiresAt.After(now) {
+				continue
+			}
+			if f.HasToken {
+				if _, ok := tokenSet[b.StorageID]; !ok {
+					continue
+				}
+			}
+			candidateIDs[b.StorageID] = struct{}{}
+		}
+	}
+
+	out := make([]models.Storage, 0, len(candidateIDs))
+	for id := range candidateIDs {
+		if st, ok := s.storages[id]; ok {
+			out = append(out, st)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].UpdatedAt.After(out[j].UpdatedAt) })
+	return out
+}
+
 func (s *Store) DeleteStorage(ctx context.Context, storageID string) error {
 	if s.useDB {
 		_, err := s.pool.Exec(ctx, `DELETE FROM storage_acl_bindings WHERE storage_id=$1; DELETE FROM access_token_storages WHERE storage_id=$1; DELETE FROM storages WHERE id=$1`, storageID)

@@ -24,6 +24,8 @@ type Pipeline struct {
 	vectorStore vector.Store
 	catalog     meta.Catalog
 	blobStore   *blob.Store
+	jobs        JobStore
+	maxAttempts int
 }
 
 func NewPipeline(
@@ -33,7 +35,11 @@ func NewPipeline(
 	vectorStore vector.Store,
 	catalog meta.Catalog,
 	blobStore *blob.Store,
+	jobs JobStore,
 ) *Pipeline {
+	if jobs == nil {
+		jobs = NewInMemoryJobStore()
+	}
 	return &Pipeline{
 		cfg:         cfg,
 		summarizer:  summarizer,
@@ -41,6 +47,8 @@ func NewPipeline(
 		vectorStore: vectorStore,
 		catalog:     catalog,
 		blobStore:   blobStore,
+		jobs:        jobs,
+		maxAttempts: defaultMaxAttempts,
 	}
 }
 
@@ -66,7 +74,22 @@ type SaveRequest struct {
 	Channel    string
 }
 
+// Save persists the document with status processing and enqueues background indexing.
 func (p *Pipeline) Save(ctx context.Context, req SaveRequest) (models.DocumentRecord, error) {
+	doc, err := p.prepareDocument(ctx, req)
+	if err != nil {
+		return models.DocumentRecord{}, err
+	}
+	if err := p.catalog.Save(ctx, doc); err != nil {
+		return models.DocumentRecord{}, err
+	}
+	if _, err := p.jobs.Enqueue(ctx, doc.DocID, JobKindIngest, p.maxAttempts); err != nil {
+		return models.DocumentRecord{}, err
+	}
+	return doc, nil
+}
+
+func (p *Pipeline) prepareDocument(ctx context.Context, req SaveRequest) (models.DocumentRecord, error) {
 	source := normalizeSource(req.Source, req.Channel)
 	if req.Visibility == "" {
 		req.Visibility = models.VisibilityPersonal
@@ -90,7 +113,7 @@ func (p *Pipeline) Save(ctx context.Context, req SaveRequest) (models.DocumentRe
 		MimeType:   req.MimeType,
 		Source:     source,
 		SourceURL:  req.SourceURL,
-		Status:     "processing",
+		Status:     models.DocumentStatusProcessing,
 		Body:       req.Body,
 		CreatedAt:  time.Now().UTC(),
 		UpdatedAt:  time.Now().UTC(),
@@ -110,21 +133,43 @@ func (p *Pipeline) Save(ctx context.Context, req SaveRequest) (models.DocumentRe
 			return models.DocumentRecord{}, err
 		}
 	}
+	return doc, nil
+}
 
-	summaryText, summaryModel, err := p.summarizer.Summarize(ctx, req.Body)
+// ProcessIngest runs summarization and vector indexing for a catalog document.
+func (p *Pipeline) ProcessIngest(ctx context.Context, docID string) error {
+	doc, ok, err := p.catalog.Get(ctx, docID)
 	if err != nil {
-		return models.DocumentRecord{}, err
+		return err
 	}
-	chunks := splitText(req.Body, p.cfg.Chunking.ChunkSize, p.cfg.Chunking.Overlap)
+	if !ok {
+		return fmt.Errorf("document %q not found", docID)
+	}
+	if doc.Status == models.DocumentStatusReady {
+		return nil
+	}
+	if doc.Status == models.DocumentStatusDeleting {
+		return nil
+	}
+
+	body, err := p.documentBody(ctx, doc)
+	if err != nil {
+		return err
+	}
+
+	summaryText, summaryModel, err := p.summarizer.Summarize(ctx, body)
+	if err != nil {
+		return err
+	}
+	chunks := splitText(body, p.cfg.Chunking.ChunkSize, p.cfg.Chunking.Overlap)
 	if len(chunks) == 0 {
-		chunks = []string{req.Body}
+		chunks = []string{body}
 	}
 
 	summaryChunkID := uuid.NewString()
-	doc.SummaryChunkID = summaryChunkID
 	summaryEmbedding, embeddingModel, err := p.embedder.Embed(ctx, summaryText)
 	if err != nil {
-		return models.DocumentRecord{}, err
+		return err
 	}
 	if err := p.vectorStore.Upsert(ctx, vector.Record{
 		Vector: summaryEmbedding,
@@ -142,13 +187,13 @@ func (p *Pipeline) Save(ctx context.Context, req SaveRequest) (models.DocumentRe
 			S3Key:      doc.S3Key,
 		},
 	}); err != nil {
-		return models.DocumentRecord{}, err
+		return err
 	}
 
 	for i, chunk := range chunks {
 		vec, _, err := p.embedder.Embed(ctx, chunk)
 		if err != nil {
-			return models.DocumentRecord{}, err
+			return err
 		}
 		if err := p.vectorStore.Upsert(ctx, vector.Record{
 			Vector: vec,
@@ -166,16 +211,57 @@ func (p *Pipeline) Save(ctx context.Context, req SaveRequest) (models.DocumentRe
 				S3Key:      doc.S3Key,
 			},
 		}); err != nil {
-			return models.DocumentRecord{}, err
+			return err
 		}
 	}
 
-	doc.Status = "ready"
+	doc.Status = models.DocumentStatusReady
+	doc.SummaryChunkID = summaryChunkID
 	doc.SourceHash = fmt.Sprintf("%s:%s", summaryModel, embeddingModel)
-	if err := p.catalog.Save(ctx, doc); err != nil {
-		return models.DocumentRecord{}, err
+	doc.UpdatedAt = time.Now().UTC()
+	return p.catalog.Save(ctx, doc)
+}
+
+func (p *Pipeline) documentBody(ctx context.Context, doc models.DocumentRecord) (string, error) {
+	if doc.Body != "" {
+		return doc.Body, nil
 	}
-	return doc, nil
+	if doc.S3Key == "" || p.blobStore == nil {
+		return "", nil
+	}
+	data, ok, err := p.blobStore.Get(ctx, doc.S3Key)
+	if err != nil {
+		return "", err
+	}
+	if !ok {
+		return "", fmt.Errorf("blob %q not found for doc %q", doc.S3Key, doc.DocID)
+	}
+	return string(data), nil
+}
+
+func (p *Pipeline) onJobTerminalFailure(ctx context.Context, job Job, cause error) {
+	if job.Kind != JobKindIngest {
+		return
+	}
+	doc, ok, err := p.catalog.Get(ctx, job.DocID)
+	if err != nil || !ok {
+		return
+	}
+	doc.Status = models.DocumentStatusFailed
+	doc.UpdatedAt = time.Now().UTC()
+	if cause != nil && doc.SourceHash == "" {
+		doc.SourceHash = cause.Error()
+	}
+	_ = p.catalog.Save(ctx, doc)
+}
+
+func (p *Pipeline) markJobFailed(_ context.Context, _ Job, err error) error {
+	return err
+}
+
+// ProcessDeleteVectors removes vector chunks after the catalog record is gone.
+func (p *Pipeline) ProcessDeleteVectors(ctx context.Context, docID string) error {
+	return p.vectorStore.DeleteByDocID(ctx, docID)
 }
 
 type BinarySaveRequest struct {
@@ -240,7 +326,6 @@ func (p *Pipeline) SaveBinary(ctx context.Context, req BinarySaveRequest) (model
 }
 
 func sanitizeS3Name(name string) string {
-	// keep it simple and predictable
 	name = strings.ReplaceAll(name, "\\", "/")
 	if i := strings.LastIndex(name, "/"); i >= 0 {
 		name = name[i+1:]
@@ -274,7 +359,6 @@ func extractTextBestEffort(payload []byte, mime string) string {
 	if strings.HasPrefix(m, "text/") || m == "application/json" || m == "application/xml" || m == "application/xhtml+xml" {
 		return string(payload)
 	}
-	// best-effort UTF-8 decode and strip obvious binary noise
 	s := string(payload)
 	s = strings.Map(func(r rune) rune {
 		if r == '\n' || r == '\r' || r == '\t' {

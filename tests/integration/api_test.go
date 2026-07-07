@@ -2,6 +2,7 @@ package integration
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"net/http"
@@ -43,8 +44,10 @@ func TestCreateAndListKnowledge(t *testing.T) {
 	if err != nil {
 		t.Fatalf("blob store: %v", err)
 	}
-	p := ingest.NewPipeline(cfg, llm.NewSimpleSummarizer(cfg.Summarization), llm.NewSimpleEmbeddingProvider(cfg.Embedding), vec, catalog, blobStore)
-	svc, err := knowledge.NewService(catalog, vec, p, accessSvc, cfg.S3.Bucket)
+	jobs := ingest.NewInMemoryJobStore()
+	p := ingest.NewPipeline(cfg, llm.NewSimpleSummarizer(cfg.Summarization), llm.NewSimpleEmbeddingProvider(cfg.Embedding), vec, catalog, blobStore, jobs)
+	worker := ingest.NewWorker(p, jobs, ingest.WorkerConfig{})
+	svc, err := knowledge.NewService(catalog, vec, p, accessSvc, cfg.S3.Bucket, worker)
 	if err != nil {
 		t.Fatalf("knowledge service: %v", err)
 	}
@@ -73,6 +76,9 @@ func TestCreateAndListKnowledge(t *testing.T) {
 	api.ServeHTTP(rec, req)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("create status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	if err := worker.ProcessUntilIdle(context.Background()); err != nil {
+		t.Fatalf("ProcessUntilIdle: %v", err)
 	}
 
 	listReq := httptest.NewRequest(http.MethodGet, "/api/knowledge", nil)

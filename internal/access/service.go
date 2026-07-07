@@ -174,17 +174,13 @@ func evaluateStorageAccess(p models.Principal, token *models.AccessToken, tokenS
 }
 
 func (s *Service) AvailableStorages(ctx context.Context, p models.Principal, token *models.AccessToken, tokenScopes []models.AccessTokenStorage) ([]models.Storage, map[string]models.EffectiveAccess, error) {
-	all, err := s.store.ListStorages(ctx)
-	if err != nil {
-		return nil, nil, err
-	}
-	acl, err := s.store.ACLForSubject(ctx, SubjectKeys(p))
+	candidates, acl, err := s.storageCandidates(ctx, p, token, tokenScopes)
 	if err != nil {
 		return nil, nil, err
 	}
 	out := []models.Storage{}
 	accessByStorage := map[string]models.EffectiveAccess{}
-	for _, st := range all {
+	for _, st := range candidates {
 		eff, ok := evaluateStorageAccess(p, token, tokenScopes, acl, st.ID, models.PermissionStorageRead)
 		if ok {
 			out = append(out, st)
@@ -195,23 +191,43 @@ func (s *Service) AvailableStorages(ctx context.Context, p models.Principal, tok
 }
 
 // ReadableStorageIDs returns the set of storage IDs the caller can read
-// documents from, computed with a single ACL load (no per-storage query).
+// documents from. Candidate storages are pre-filtered in SQL (or in-memory
+// equivalent) so work scales with accessible storages, not all storages.
 func (s *Service) ReadableStorageIDs(ctx context.Context, p models.Principal, token *models.AccessToken, tokenScopes []models.AccessTokenStorage) (map[string]struct{}, error) {
-	all, err := s.store.ListStorages(ctx)
+	candidates, acl, err := s.storageCandidates(ctx, p, token, tokenScopes)
 	if err != nil {
 		return nil, err
 	}
-	acl, err := s.store.ACLForSubject(ctx, SubjectKeys(p))
-	if err != nil {
-		return nil, err
-	}
-	out := make(map[string]struct{}, len(all))
-	for _, st := range all {
+	out := make(map[string]struct{}, len(candidates))
+	for _, st := range candidates {
 		if _, ok := evaluateStorageAccess(p, token, tokenScopes, acl, st.ID, models.PermissionDocumentRead); ok {
 			out[st.ID] = struct{}{}
 		}
 	}
 	return out, nil
+}
+
+func (s *Service) storageCandidates(ctx context.Context, p models.Principal, token *models.AccessToken, tokenScopes []models.AccessTokenStorage) ([]models.Storage, []models.ACLBinding, error) {
+	filter := AccessibleStorageFilter{
+		SubjectKeys:   SubjectKeys(p),
+		PlatformAdmin: token == nil && hasScope(p.Scopes, "platform_admin"),
+		HasToken:      token != nil,
+	}
+	if token != nil {
+		filter.TokenStorageIDs = make([]string, 0, len(tokenScopes))
+		for _, scope := range tokenScopes {
+			filter.TokenStorageIDs = append(filter.TokenStorageIDs, scope.StorageID)
+		}
+	}
+	candidates, err := s.store.ListAccessibleStorages(ctx, filter)
+	if err != nil {
+		return nil, nil, err
+	}
+	acl, err := s.store.ACLForSubject(ctx, SubjectKeys(p))
+	if err != nil {
+		return nil, nil, err
+	}
+	return candidates, acl, nil
 }
 
 func intersectMode(a, b models.AccessMode) models.AccessMode {

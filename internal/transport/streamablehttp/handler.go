@@ -2,8 +2,9 @@ package streamablehttp
 
 import (
 	"encoding/json"
-	"fmt"
+	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/synamcps/synamcps-server/internal/auth"
@@ -35,27 +36,76 @@ func (h *Handler) post(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
-
-	var body map[string]any
-	_ = json.NewDecoder(r.Body).Decode(&body)
-	resp, err := h.server.HandleJSONRPC(r.Context(), p, body)
-	if err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"jsonrpc": "2.0",
-			"id":      body["id"],
-			"error": map[string]any{
-				"code":    domainerr.JSONRPCCode(err),
-				"message": err.Error(),
-			},
-		})
+	if !accepts(r, "application/json") && !accepts(r, "*/*") {
+		http.Error(w, "Accept must allow application/json", http.StatusNotAcceptable)
 		return
 	}
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(resp)
+	if sessionID := r.Header.Get("Mcp-Session-Id"); sessionID != "" {
+		if !h.authorizedSession(w, p, sessionID) {
+			return
+		}
+	}
+
+	raw, err := io.ReadAll(r.Body)
+	if err != nil {
+		writeJSON(w, mcp.NewErrorResponse(nil, -32700, "parse error"), http.StatusBadRequest)
+		return
+	}
+	responses, status := h.handleJSONRPCPayload(w, r, p, raw)
+	if len(responses) == 0 {
+		w.WriteHeader(http.StatusAccepted)
+		return
+	}
+	writeJSON(w, responsesPayload(raw, responses), status)
 }
 
 func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
+	p, ok := auth.PrincipalFromContext(r.Context())
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	if !accepts(r, "text/event-stream") && !accepts(r, "*/*") {
+		http.Error(w, "Accept must allow text/event-stream", http.StatusNotAcceptable)
+		return
+	}
+	sessionID := r.Header.Get("Mcp-Session-Id")
+	if sessionID == "" {
+		http.Error(w, "missing Mcp-Session-Id", http.StatusBadRequest)
+		return
+	}
+	if !h.authorizedSession(w, p, sessionID) {
+		return
+	}
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
+		return
+	}
+
+	streamID := "default"
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	for _, replay := range h.sessions.ReplayFrom(sessionID, streamID, r.Header.Get("Last-Event-ID")) {
+		_, _ = w.Write([]byte(replay))
+	}
+	flusher.Flush()
+
+	ticker := time.NewTicker(25 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case <-ticker.C:
+			_, _ = w.Write([]byte(": keepalive\n\n"))
+			flusher.Flush()
+		}
+	}
+}
+
+func (h *Handler) deleteSession(w http.ResponseWriter, r *http.Request) {
 	p, ok := auth.PrincipalFromContext(r.Context())
 	if !ok {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
@@ -66,35 +116,112 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "missing Mcp-Session-Id", http.StatusBadRequest)
 		return
 	}
+	if !h.authorizedSession(w, p, sessionID) {
+		return
+	}
+	h.sessions.DeleteMCPSession(sessionID)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *Handler) handleJSONRPCPayload(w http.ResponseWriter, r *http.Request, p models.Principal, raw []byte) ([]mcp.JSONRPCResponse, int) {
+	trimmed := strings.TrimSpace(string(raw))
+	if trimmed == "" {
+		return []mcp.JSONRPCResponse{mcp.NewErrorResponse(nil, -32700, "parse error")}, http.StatusBadRequest
+	}
+	if strings.HasPrefix(trimmed, "[") {
+		var batch []mcp.JSONRPCRequest
+		if err := json.Unmarshal(raw, &batch); err != nil || len(batch) == 0 {
+			return []mcp.JSONRPCResponse{mcp.NewErrorResponse(nil, -32600, "invalid request")}, http.StatusBadRequest
+		}
+		out := make([]mcp.JSONRPCResponse, 0, len(batch))
+		status := http.StatusOK
+		for _, req := range batch {
+			resp, code := h.handleOne(w, r, p, req)
+			if resp != nil {
+				out = append(out, *resp)
+			}
+			if code >= 400 {
+				status = code
+			}
+		}
+		return out, status
+	}
+	var req mcp.JSONRPCRequest
+	if err := json.Unmarshal(raw, &req); err != nil {
+		return []mcp.JSONRPCResponse{mcp.NewErrorResponse(nil, -32700, "parse error")}, http.StatusBadRequest
+	}
+	resp, status := h.handleOne(w, r, p, req)
+	if resp == nil {
+		return nil, status
+	}
+	return []mcp.JSONRPCResponse{*resp}, status
+}
+
+func (h *Handler) handleOne(w http.ResponseWriter, r *http.Request, p models.Principal, req mcp.JSONRPCRequest) (*mcp.JSONRPCResponse, int) {
+	resp, err := h.server.HandleRequest(r.Context(), p, req)
+	if err != nil {
+		if req.IsNotification() {
+			return nil, http.StatusAccepted
+		}
+		return ptr(mcp.NewErrorResponse(req.ID, domainerr.JSONRPCCode(err), err.Error())), http.StatusOK
+	}
+	if resp == nil {
+		return nil, http.StatusAccepted
+	}
+	if req.Method == "initialize" {
+		if result, ok := resp.Result.(map[string]any); ok {
+			if sessionID, _ := result["sessionId"].(string); sessionID != "" {
+				// MCP clients expect the streamable HTTP session id in this header.
+				// The result keeps sessionId for compatibility with older clients.
+				w.Header().Set("Mcp-Session-Id", sessionID)
+			}
+		}
+	}
+	return resp, http.StatusOK
+}
+
+func (h *Handler) authorizedSession(w http.ResponseWriter, p models.Principal, sessionID string) bool {
 	sess, ok := h.sessions.GetMCPSession(sessionID)
 	if !ok {
 		http.Error(w, "invalid session", http.StatusNotFound)
-		return
+		return false
 	}
-	// The session must belong to the authenticated caller, otherwise anyone
-	// holding a session id could read another principal's event stream.
 	if models.SubjectKeyForPrincipal(sess.Principal) != models.SubjectKeyForPrincipal(p) {
 		http.Error(w, "forbidden", http.StatusForbidden)
-		return
+		return false
 	}
-
-	streamID := "default"
-	lastEvent := r.Header.Get("Last-Event-ID")
-	if lastEvent != "" {
-		for _, replay := range h.sessions.ReplayFrom(sessionID, streamID, lastEvent) {
-			_, _ = w.Write([]byte(replay))
-		}
-	}
-
-	w.Header().Set("Content-Type", "text/event-stream")
-	eventID := fmt.Sprintf("%d", time.Now().UnixNano())
-	payload := "id: " + eventID + "\nevent: message\ndata: {\"jsonrpc\":\"2.0\",\"method\":\"ping\"}\n\n"
-	h.sessions.SaveLastEvent(sessionID, streamID, eventID)
-	h.sessions.AppendEvent(sessionID, streamID, payload)
-	_, _ = w.Write([]byte(payload))
+	return true
 }
 
-func (h *Handler) deleteSession(w http.ResponseWriter, r *http.Request) {
-	// For the scaffold we accept delete, no-op for store cleanup.
-	w.WriteHeader(http.StatusNoContent)
+func accepts(r *http.Request, want string) bool {
+	values := r.Header.Values("Accept")
+	if len(values) == 0 {
+		return true
+	}
+	for _, raw := range values {
+		for _, item := range strings.Split(raw, ",") {
+			mediaType := strings.TrimSpace(strings.Split(item, ";")[0])
+			if mediaType == want || mediaType == "*/*" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func responsesPayload(raw []byte, responses []mcp.JSONRPCResponse) any {
+	if strings.HasPrefix(strings.TrimSpace(string(raw)), "[") {
+		return responses
+	}
+	return responses[0]
+}
+
+func writeJSON(w http.ResponseWriter, payload any, status int) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(payload)
+}
+
+func ptr[T any](v T) *T {
+	return &v
 }

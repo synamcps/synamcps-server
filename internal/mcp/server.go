@@ -50,21 +50,53 @@ func (s *Server) HandleInitialize(w http.ResponseWriter, p models.Principal) {
 	sess := s.sessions.CreateMCPSession(p, 12*time.Hour)
 	w.Header().Set("Mcp-Session-Id", sess.SessionID)
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{
-		"jsonrpc": "2.0",
-		"id":      "init",
-		"result":  s.initializeResult(context.Background(), p, models.APIAccessContext{}, "2024-11-05", sess.SessionID),
-	})
+	_ = json.NewEncoder(w).Encode(NewResultResponse(json.RawMessage(`"init"`), s.initializeResult(context.Background(), p, models.APIAccessContext{}, "2024-11-05", sess.SessionID)))
 }
 
 func (s *Server) HandleJSONRPC(ctx context.Context, p models.Principal, request map[string]any) (map[string]any, error) {
+	id, _ := json.Marshal(request["id"])
+	if _, ok := request["id"]; !ok {
+		id = nil
+	}
 	start := time.Now()
 	method, _ := request["method"].(string)
 	params, _ := request["params"].(map[string]any)
 	if params == nil {
 		params = map[string]any{}
 	}
-	id := request["id"]
+	resp, err := s.handleRequest(ctx, p, JSONRPCRequest{JSONRPC: jsonrpcVersion, ID: id, Method: method, Params: params}, start)
+	if err != nil {
+		return nil, err
+	}
+	raw, err := json.Marshal(resp)
+	if err != nil {
+		return nil, err
+	}
+	var out map[string]any
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (s *Server) HandleRequest(ctx context.Context, p models.Principal, request JSONRPCRequest) (*JSONRPCResponse, error) {
+	if request.IsNotification() {
+		_, err := s.handleRequest(ctx, p, request, time.Now())
+		return nil, err
+	}
+	resp, err := s.handleRequest(ctx, p, request, time.Now())
+	if err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+func (s *Server) handleRequest(ctx context.Context, p models.Principal, request JSONRPCRequest, start time.Time) (JSONRPCResponse, error) {
+	method := request.Method
+	params := request.Params
+	if params == nil {
+		params = map[string]any{}
+	}
 	storageID := asString(params["storageId"])
 	accessCtx, _ := auth.AccessContextFromContext(ctx)
 	status := "ok"
@@ -86,14 +118,22 @@ func (s *Server) HandleJSONRPC(ctx context.Context, p models.Principal, request 
 		ok, err := s.usage.Allow(ctx, *accessCtx.AccessToken, storageID)
 		if err != nil {
 			status = "error"
-			return nil, err
+			return JSONRPCResponse{}, err
 		}
 		if !ok {
 			status = "rate_limited"
-			return nil, domainerr.ErrRateLimited
+			return JSONRPCResponse{}, domainerr.ErrRateLimited
 		}
 	}
 
+	result, err := s.dispatch(ctx, p, accessCtx, method, params, request.ID, &status, &storageID)
+	if err != nil {
+		return JSONRPCResponse{}, err
+	}
+	return NewResultResponse(request.ID, result), nil
+}
+
+func (s *Server) dispatch(ctx context.Context, p models.Principal, accessCtx models.APIAccessContext, method string, params map[string]any, id json.RawMessage, status *string, storageID *string) (any, error) {
 	switch method {
 	case "initialize":
 		sess := s.sessions.CreateMCPSession(p, 12*time.Hour)
@@ -101,20 +141,16 @@ func (s *Server) HandleJSONRPC(ctx context.Context, p models.Principal, request 
 		if protocolVersion == "" {
 			protocolVersion = "2024-11-05"
 		}
-		return map[string]any{
-			"jsonrpc": "2.0",
-			"id":      id,
-			"result":  s.initializeResult(ctx, p, accessCtx, protocolVersion, sess.SessionID),
-		}, nil
+		return s.initializeResult(ctx, p, accessCtx, protocolVersion, sess.SessionID), nil
 	case "notifications/initialized":
-		return map[string]any{"jsonrpc": "2.0", "id": id, "result": map[string]any{}}, nil
+		return map[string]any{}, nil
 	case "tools/list":
 		result, err := s.handleToolsList(ctx, p, accessCtx)
 		if err != nil {
-			status = "error"
+			*status = "error"
 			return nil, err
 		}
-		return map[string]any{"jsonrpc": "2.0", "id": id, "result": result}, nil
+		return result, nil
 	case "tools/call":
 		originalName := asString(params["name"])
 		arguments, _ := params["arguments"].(map[string]any)
@@ -124,81 +160,75 @@ func (s *Server) HandleJSONRPC(ctx context.Context, p models.Principal, request 
 		if s.proxy != nil && s.proxy.Enabled() && s.proxy.HasProxiedTool(originalName) {
 			servers, err := s.accessibleMCPServers(ctx, p, accessCtx)
 			if err != nil {
-				status = statusFromError(err)
+				*status = statusFromError(err)
 				return nil, err
 			}
 			result, err := s.proxy.CallTool(ctx, originalName, arguments, servers)
 			if err != nil {
-				status = statusFromError(err)
+				*status = statusFromError(err)
 				return nil, err
 			}
-			return toolCallResponse(id, result), nil
+			return toolCallResult(result), nil
 		}
 		name := methodForToolName(originalName)
-		callReq := map[string]any{
-			"jsonrpc": "2.0",
-			"id":      id,
-			"method":  name,
-			"params":  arguments,
-		}
-		resp, err := s.HandleJSONRPC(ctx, p, callReq)
+		result, err := s.dispatch(ctx, p, accessCtx, name, arguments, id, status, storageID)
 		if err != nil {
-			status = statusFromError(err)
+			*status = statusFromError(err)
 			return nil, err
 		}
-		return toolCallResponse(id, resp["result"]), nil
+		return toolCallResult(result), nil
 	case "resources/list":
 		result, err := s.handleResourcesList(ctx, p, accessCtx)
 		if err != nil {
-			status = "error"
+			*status = "error"
 			return nil, err
 		}
-		return map[string]any{"jsonrpc": "2.0", "id": id, "result": result}, nil
+		return result, nil
 	case "resources/read":
 		uri := asString(params["uri"])
 		servers, err := s.accessibleMCPServers(ctx, p, accessCtx)
 		if err != nil {
-			status = statusFromError(err)
+			*status = statusFromError(err)
 			return nil, err
 		}
 		if s.proxy == nil || !s.proxy.Enabled() {
-			status = "error"
+			*status = "error"
 			return nil, domainerr.ErrUnknownMethod
 		}
 		result, err := s.proxy.ReadResource(ctx, uri, servers)
 		if err != nil {
-			status = statusFromError(err)
+			*status = statusFromError(err)
 			return nil, err
 		}
-		return map[string]any{"jsonrpc": "2.0", "id": id, "result": result}, nil
+		return result, nil
 	case "prompts/list":
 		result, err := s.handlePromptsList(ctx, p, accessCtx)
 		if err != nil {
-			status = "error"
+			*status = "error"
 			return nil, err
 		}
-		return map[string]any{"jsonrpc": "2.0", "id": id, "result": result}, nil
+		return result, nil
 	case "prompts/get":
 		name := asString(params["name"])
 		arguments, _ := params["arguments"].(map[string]any)
 		servers, err := s.accessibleMCPServers(ctx, p, accessCtx)
 		if err != nil {
-			status = statusFromError(err)
+			*status = statusFromError(err)
 			return nil, err
 		}
 		if s.proxy == nil || !s.proxy.Enabled() {
-			status = "error"
+			*status = "error"
 			return nil, domainerr.ErrUnknownMethod
 		}
 		result, err := s.proxy.GetPrompt(ctx, name, arguments, servers)
 		if err != nil {
-			status = statusFromError(err)
+			*status = statusFromError(err)
 			return nil, err
 		}
-		return map[string]any{"jsonrpc": "2.0", "id": id, "result": result}, nil
+		return result, nil
 	case "knowledge.save":
 		in := knowledge.SaveInput{
-			StorageID:  storageID,
+			StorageID:  *storageID,
 			Title:      asString(params["title"]),
 			Text:       asString(params["text"]),
 			MimeType:   asString(params["mimeType"]),
@@ -210,30 +240,30 @@ func (s *Server) HandleJSONRPC(ctx context.Context, p models.Principal, request 
 		}
 		doc, err := s.knowledge.Save(ctx, p, accessCtx, in)
 		if err != nil {
-			status = statusFromError(err)
+			*status = statusFromError(err)
 			return nil, err
 		}
-		return map[string]any{"jsonrpc": "2.0", "id": id, "result": doc}, nil
+		return doc, nil
 	case "knowledge.get":
 		doc, err := s.knowledge.Get(ctx, p, accessCtx, asString(params["docId"]))
 		if err != nil {
-			status = statusFromError(err)
+			*status = statusFromError(err)
 			return nil, err
 		}
-		storageID = doc.StorageID
-		return map[string]any{"jsonrpc": "2.0", "id": id, "result": doc}, nil
+		*storageID = doc.StorageID
+		return doc, nil
 	case "knowledge.delete":
 		if err := s.knowledge.Delete(ctx, p, accessCtx, asString(params["docId"])); err != nil {
-			status = statusFromError(err)
+			*status = statusFromError(err)
 			return nil, err
 		}
-		return map[string]any{"jsonrpc": "2.0", "id": id, "result": map[string]string{"status": "deleted"}}, nil
+		return map[string]string{"status": "deleted"}, nil
 	case "knowledge.search":
 		req := models.SearchRequest{
 			Query: asString(params["query"]),
 			TopK:  asInt(params["topK"]),
 			Filters: models.PageRequest{
-				StorageID:     storageID,
+				StorageID:     *storageID,
 				Source:        asString(params["source"]),
 				SourceURL:     asString(params["sourceUrl"]),
 				SourceURLMode: asString(params["sourceUrlMode"]),
@@ -241,12 +271,12 @@ func (s *Server) HandleJSONRPC(ctx context.Context, p models.Principal, request 
 		}
 		hits, err := s.knowledge.Search(ctx, p, accessCtx, req, true)
 		if err != nil {
-			status = statusFromError(err)
+			*status = statusFromError(err)
 			return nil, err
 		}
-		return map[string]any{"jsonrpc": "2.0", "id": id, "result": hits}, nil
+		return hits, nil
 	default:
-		status = "error"
+		*status = "error"
 		return nil, domainerr.ErrUnknownMethod
 	}
 }
@@ -269,20 +299,16 @@ func (s *Server) exposedProxy(ctx context.Context, p models.Principal, accessCtx
 	return s.proxy.ExposedForAccess(ctx, servers)
 }
 
-func toolCallResponse(id any, result any) map[string]any {
+func toolCallResult(result any) map[string]any {
 	raw, err := json.MarshalIndent(result, "", "  ")
 	if err != nil {
 		raw, _ = json.Marshal(result)
 	}
 	return map[string]any{
-		"jsonrpc": "2.0",
-		"id":      id,
-		"result": map[string]any{
-			"content": []map[string]any{
-				{
-					"type": "text",
-					"text": string(raw),
-				},
+		"content": []map[string]any{
+			{
+				"type": "text",
+				"text": string(raw),
 			},
 		},
 	}

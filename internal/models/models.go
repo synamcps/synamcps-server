@@ -418,6 +418,13 @@ type UsageSeries struct {
 	Points []UsagePoint      `json:"points"`
 }
 
+const (
+	DocumentStatusProcessing = "processing"
+	DocumentStatusReady        = "ready"
+	DocumentStatusFailed       = "failed"
+	DocumentStatusDeleting     = "deleting"
+)
+
 type DocumentRecord struct {
 	DocID          string     `json:"docId"`
 	StorageID      string     `json:"storageId"`

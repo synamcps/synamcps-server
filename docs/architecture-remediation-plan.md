@@ -117,11 +117,12 @@
 
 ## Этап 5 — Протокол MCP и качество API
 
-### 5.1. Оценить переход на официальный MCP Go SDK
+### 5.1. Довести custom MCP server/proxy до приемлемой типизации и Streamable HTTP
 - **Проблема:** весь `internal/mcp` и `mcpproxy/client.go` — рукописный JSON-RPC на `map[string]any`: рекурсия `tools/call` → `HandleJSONRPC`, GET `/mcp` отдаёт один ping вместо SSE-стрима, `DELETE /mcp` — no-op, batch и notifications без `id` не по спеке.
-- **Действия:** спайк (1–2 дня) на `github.com/modelcontextprotocol/go-sdk`: сервер-часть и клиент-часть прокси; решение — миграция или осознанное продолжение своей реализации с типизацией запросов/ответов и полноценным SSE.
-- **Файлы:** `internal/mcp/`, `internal/mcpproxy/client.go`, `internal/transport/streamablehttp/handler.go`.
-- **DoD:** зафиксированное решение с обоснованием; при миграции — e2e-тест подключения реального клиента (Claude Code / Cursor) проходит.
+- **Решение:** остаёмся на custom-реализации; переход на официальный `github.com/modelcontextprotocol/go-sdk` вынесен в `docs/backlog.md`.
+- **Действия:** типизировать JSON-RPC request/response/error; убрать рекурсивный dispatch `tools/call`; реализовать batch и notifications без `id`; довести Streamable HTTP до долгоживущего SSE GET, replay по `Last-Event-ID` и удаления session по `DELETE /mcp`; типизировать proxy-клиент.
+- **Файлы:** `internal/mcp/`, `internal/mcpproxy/client.go`, `internal/transport/streamablehttp/handler.go`, `internal/session/redis_store.go`, `docs/backlog.md`.
+- **DoD:** batch/notifications обрабатываются по JSON-RPC-семантике; GET `/mcp` держит SSE stream, а не отдаёт один ping; DELETE очищает session; proxy-клиент не опирается на нетипизированный response envelope.
 
 ### 5.2. Структура зависимостей роутера и конфигов
 - **Проблема:** `NewRouterWithAdmin` — 13 позиционных параметров (`internal/httpapi/router.go:18`); `ingest.Pipeline` и `auth.Gateway` принимают весь `config.Config`.

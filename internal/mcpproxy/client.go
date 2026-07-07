@@ -26,6 +26,25 @@ type upstreamClient struct {
 	createdAt time.Time
 }
 
+type upstreamJSONRPCRequest struct {
+	JSONRPC string         `json:"jsonrpc"`
+	ID      int64          `json:"id,omitempty"`
+	Method  string         `json:"method"`
+	Params  map[string]any `json:"params,omitempty"`
+}
+
+type upstreamJSONRPCResponse struct {
+	JSONRPC string                `json:"jsonrpc"`
+	ID      int64                 `json:"id,omitempty"`
+	Result  json.RawMessage       `json:"result,omitempty"`
+	Error   *upstreamJSONRPCError `json:"error,omitempty"`
+}
+
+type upstreamJSONRPCError struct {
+	Code    int    `json:"code"`
+	Message string `json:"message"`
+}
+
 func newUpstreamClient(url string, headers map[string]string, timeout time.Duration) *upstreamClient {
 	return &upstreamClient{
 		httpClient: &http.Client{Timeout: timeout},
@@ -52,21 +71,35 @@ func (c *upstreamClient) setSessionID(id string) {
 
 func (c *upstreamClient) call(ctx context.Context, method string, params map[string]any) (map[string]any, error) {
 	id := c.reqID.Add(1)
-	body := map[string]any{
-		"jsonrpc": "2.0",
-		"id":      id,
-		"method":  method,
+	body := upstreamJSONRPCRequest{
+		JSONRPC: "2.0",
+		ID:      id,
+		Method:  method,
+		Params:  params,
 	}
-	if params != nil {
-		body["params"] = params
+	var result map[string]any
+	if err := c.post(ctx, body, &result); err != nil {
+		return nil, err
 	}
+	return result, nil
+}
+
+func (c *upstreamClient) notify(ctx context.Context, method string, params map[string]any) error {
+	return c.post(ctx, upstreamJSONRPCRequest{
+		JSONRPC: "2.0",
+		Method:  method,
+		Params:  params,
+	}, nil)
+}
+
+func (c *upstreamClient) post(ctx context.Context, body upstreamJSONRPCRequest, result any) error {
 	raw, err := json.Marshal(body)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.url, bytes.NewReader(raw))
 	if err != nil {
-		return nil, err
+		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json, text/event-stream")
@@ -78,30 +111,38 @@ func (c *upstreamClient) call(ctx context.Context, method string, params map[str
 	}
 	res, err := c.httpClient.Do(req)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	defer res.Body.Close()
 	respBody, err := io.ReadAll(res.Body)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	if res.StatusCode >= 400 {
-		return nil, fmt.Errorf("upstream http %d: %s", res.StatusCode, string(respBody))
+		return fmt.Errorf("upstream http %d: %s", res.StatusCode, string(respBody))
 	}
 	c.setSessionID(res.Header.Get("Mcp-Session-Id"))
-	var resp map[string]any
-	if err := json.Unmarshal(respBody, &resp); err != nil {
-		return nil, fmt.Errorf("decode upstream response: %w", err)
+	if result == nil || len(respBody) == 0 {
+		return nil
 	}
-	if errObj, ok := resp["error"].(map[string]any); ok {
-		msg, _ := errObj["message"].(string)
+	var resp upstreamJSONRPCResponse
+	if err := json.Unmarshal(respBody, &resp); err != nil {
+		return fmt.Errorf("decode upstream response: %w", err)
+	}
+	if resp.Error != nil {
+		msg := resp.Error.Message
 		if msg == "" {
 			msg = "upstream error"
 		}
-		return nil, fmt.Errorf("%s", msg)
+		return fmt.Errorf("%s", msg)
 	}
-	result, _ := resp["result"].(map[string]any)
-	return result, nil
+	if len(resp.Result) == 0 {
+		return nil
+	}
+	if err := json.Unmarshal(resp.Result, result); err != nil {
+		return fmt.Errorf("decode upstream result: %w", err)
+	}
+	return nil
 }
 
 func (c *upstreamClient) initialize(ctx context.Context) error {
@@ -119,7 +160,7 @@ func (c *upstreamClient) initialize(ctx context.Context) error {
 	if sid, _ := result["sessionId"].(string); sid != "" {
 		c.setSessionID(sid)
 	}
-	_, _ = c.call(ctx, "notifications/initialized", nil)
+	_ = c.notify(ctx, "notifications/initialized", nil)
 	return nil
 }
 

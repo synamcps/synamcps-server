@@ -177,3 +177,62 @@ func TestAvailableMCPServers(t *testing.T) {
 		}
 	})
 }
+
+func TestEvaluateMCPServerAccess(t *testing.T) {
+	acl := []models.MCPServerACLBinding{
+		{ServerID: "srv-1", Role: models.RoleMCPServerUser},
+	}
+	p := models.Principal{UserID: "alice", SubjectKey: "user:oauth:alice"}
+	token := &models.AccessToken{ID: "tok-1"}
+	scopes := []models.AccessTokenMCPServer{{TokenID: "tok-1", ServerID: "srv-1"}}
+
+	tests := []struct {
+		name       string
+		p          models.Principal
+		token      *models.AccessToken
+		scopes     []models.AccessTokenMCPServer
+		serverID   string
+		permission models.MCPServerPermission
+		want       bool
+	}{
+		{
+			name:       "acl grants use",
+			p:          p,
+			serverID:   "srv-1",
+			permission: models.PermissionMCPServerUse,
+			want:       true,
+		},
+		{
+			name:       "no binding for server",
+			p:          p,
+			serverID:   "srv-2",
+			permission: models.PermissionMCPServerUse,
+			want:       false,
+		},
+		{
+			name:       "token scope required",
+			p:          p,
+			token:      token,
+			scopes:     scopes,
+			serverID:   "srv-2",
+			permission: models.PermissionMCPServerUse,
+			want:       false,
+		},
+		{
+			name:       "platform admin without acl",
+			p:          models.Principal{Scopes: []string{"platform_admin"}},
+			serverID:   "srv-2",
+			permission: models.PermissionMCPServerUse,
+			want:       true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := evaluateMCPServerAccess(tt.p, tt.token, tt.scopes, acl, tt.serverID, tt.permission)
+			if got != tt.want {
+				t.Fatalf("got %v, want %v", got, tt.want)
+			}
+		})
+	}
+}

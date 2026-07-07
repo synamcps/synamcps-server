@@ -76,6 +76,24 @@ func (s *Store) Get(_ context.Context, docID string) (models.DocumentRecord, boo
 	return v, ok, nil
 }
 
+func (s *Store) GetMany(_ context.Context, docIDs []string) (map[string]models.DocumentRecord, error) {
+	if len(docIDs) == 0 {
+		return map[string]models.DocumentRecord{}, nil
+	}
+	if s.useDB {
+		return s.getManyDB(context.Background(), docIDs)
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make(map[string]models.DocumentRecord, len(docIDs))
+	for _, id := range docIDs {
+		if doc, ok := s.docs[id]; ok {
+			out[id] = doc
+		}
+	}
+	return out, nil
+}
+
 func (s *Store) Delete(_ context.Context, docID string) error {
 	if s.useDB {
 		_, err := s.pool.Exec(context.Background(), `DELETE FROM knowledge_documents WHERE doc_id=$1`, docID)
@@ -283,6 +301,25 @@ FROM knowledge_documents WHERE doc_id=$1`, docID)
 		return models.DocumentRecord{}, false, err
 	}
 	return doc, true, nil
+}
+
+func (s *Store) getManyDB(ctx context.Context, docIDs []string) (map[string]models.DocumentRecord, error) {
+	rows, err := s.pool.Query(ctx, `
+SELECT doc_id, storage_id, owner_id, visibility, group_ids, title, mime_type, source, COALESCE(source_url,''), COALESCE(source_hash,''), COALESCE(s3_key,''), COALESCE(summary_chunk_id,''), status, COALESCE(body,''), created_at, updated_at
+FROM knowledge_documents WHERE doc_id = ANY($1)`, docIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make(map[string]models.DocumentRecord, len(docIDs))
+	for rows.Next() {
+		var doc models.DocumentRecord
+		if err := rows.Scan(&doc.DocID, &doc.StorageID, &doc.OwnerID, &doc.Visibility, &doc.GroupIDs, &doc.Title, &doc.MimeType, &doc.Source, &doc.SourceURL, &doc.SourceHash, &doc.S3Key, &doc.SummaryChunkID, &doc.Status, &doc.Body, &doc.CreatedAt, &doc.UpdatedAt); err != nil {
+			return nil, err
+		}
+		out[doc.DocID] = doc
+	}
+	return out, rows.Err()
 }
 
 func (s *Store) listDB(ctx context.Context, page models.PageRequest) (models.PaginatedKnowledgeList, error) {

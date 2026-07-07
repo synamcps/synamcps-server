@@ -71,6 +71,32 @@ func (s *Store) GetMCPSession(id string) (models.Session, bool) {
 	return v, ok && time.Now().Before(v.ExpiresAt)
 }
 
+func (s *Store) DeleteMCPSession(id string) {
+	s.mu.Lock()
+	delete(s.mcpSessions, id)
+	for key := range s.streamState {
+		if len(key) > len(id) && key[:len(id)+1] == id+":" {
+			delete(s.streamState, key)
+		}
+	}
+	for key := range s.streamEvents {
+		if len(key) > len(id) && key[:len(id)+1] == id+":" {
+			delete(s.streamEvents, key)
+		}
+	}
+	s.mu.Unlock()
+	if s.redis == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	prefix := s.redisKey("mcp:")
+	iter := s.redis.Scan(ctx, 0, prefix+"*"+id+"*", 100).Iterator()
+	for iter.Next(ctx) {
+		_ = s.redis.Del(ctx, iter.Val()).Err()
+	}
+}
+
 func (s *Store) CreateWebSession(p models.Principal, ttl time.Duration) models.WebSession {
 	session := models.WebSession{
 		SessionID: uuid.NewString(),

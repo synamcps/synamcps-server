@@ -124,8 +124,11 @@ func main() {
 
 	summarizer := llm.NewSimpleSummarizer(cfg.Summarization)
 	embedder := llm.NewSimpleEmbeddingProvider(cfg.Embedding)
-	pipeline := ingest.NewPipeline(cfg, summarizer, embedder, vec, catalog, blobStore)
-	knowledgeService, err := knowledge.NewService(catalog, vec, pipeline, accessService, cfg.S3.Bucket)
+	jobStore := ingest.NewJobStore(ctx, pgPool)
+	pipeline := ingest.NewPipeline(cfg, summarizer, embedder, vec, catalog, blobStore, jobStore)
+	ingestWorker := ingest.NewWorker(pipeline, jobStore, ingest.WorkerConfig{})
+	ingestWorker.Start(ctx)
+	knowledgeService, err := knowledge.NewService(catalog, vec, pipeline, accessService, cfg.S3.Bucket, ingestWorker)
 	if err != nil {
 		log.Fatalf("init knowledge service: %v", err)
 	}
@@ -202,6 +205,7 @@ func main() {
 	cancel()
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer shutdownCancel()
+	ingestWorker.Shutdown()
 	sessions.EvictExpired()
 	_ = sessions.Close()
 	_ = server.Shutdown(shutdownCtx)
