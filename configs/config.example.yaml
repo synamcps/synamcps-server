@@ -1,5 +1,6 @@
 server:
   listen_addr: ":8080"
+  dev_mode: false
 
 transport:
   streamable_http: true
@@ -70,6 +71,8 @@ vector_backend:
 metadata_catalog:
   driver: "postgres"
   dsn: "postgres://postgres:postgres@postgres:5432/syna?sslmode=disable"
+  pool_max_conns: 20
+  pool_min_conns: 2
 
 chunking:
   chunk_size: 400

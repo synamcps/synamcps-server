@@ -1,5 +1,6 @@
 server:
   listen_addr: ":8080"
+  dev_mode: true
 
 transport:
   streamable_http: true
@@ -18,7 +19,8 @@ oauth:
     - name: keycloak
       issuer: "http://localhost:8081/realms/syna"
       audience: "syna-mcp"
-      jwks_url: "http://localhost:8081/realms/syna/protocol/openid-connect/certs"
+      #jwks_url: "http://localhost:8081/realms/syna/protocol/openid-connect/certs"
+      jwks_url: "insecure"
   google_allowed_domains: []
 
 teleport:
@@ -65,6 +67,8 @@ vector_backend:
 metadata_catalog:
   driver: "postgres"
   dsn: "postgres://postgres:postgres@postgres:5432/syna?sslmode=disable"
+  pool_max_conns: 20
+  pool_min_conns: 2
 
 chunking:
   chunk_size: 400

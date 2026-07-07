@@ -243,6 +243,30 @@ func (s *Store) Ping(ctx context.Context) error {
 	return nil
 }
 
+// EvictExpired removes expired in-memory sessions and stream state.
+func (s *Store) EvictExpired() {
+	now := time.Now()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for id, sess := range s.mcpSessions {
+		if !now.Before(sess.ExpiresAt) {
+			delete(s.mcpSessions, id)
+		}
+	}
+	for id, sess := range s.webSessions {
+		if !now.Before(sess.ExpiresAt) {
+			delete(s.webSessions, id)
+		}
+	}
+}
+
+func (s *Store) Close() error {
+	if s.redis == nil {
+		return nil
+	}
+	return s.redis.Close()
+}
+
 func (s *Store) IsPersistent() bool {
 	return s.redis != nil
 }

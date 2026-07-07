@@ -71,86 +71,21 @@ func NewStore(ctx context.Context, dsn string, cipher *secrets.Cipher) (*Store, 
 	if err != nil {
 		return nil, fmt.Errorf("mcpproxy pool: %w", err)
 	}
-	s.pool = pool
-	s.useDB = true
-	if err := s.migrate(ctx); err != nil {
-		return nil, err
-	}
-	return s, nil
+	return NewStoreWithPool(ctx, pool, cipher)
 }
 
-func (s *Store) migrate(ctx context.Context) error {
-	ddl := `
-CREATE TABLE IF NOT EXISTS mcp_servers (
-  id TEXT PRIMARY KEY,
-  slug TEXT NOT NULL UNIQUE,
-  name TEXT NOT NULL,
-  owner_subject_key TEXT NOT NULL,
-  transport TEXT NOT NULL,
-  url TEXT NOT NULL,
-  headers_json TEXT NOT NULL DEFAULT '{}',
-  auth_type TEXT NOT NULL DEFAULT 'bearer',
-  auth_header_name TEXT NOT NULL DEFAULT 'Authorization',
-  auth_secret_encrypted BYTEA,
-  auth_secret_nonce BYTEA,
-  status TEXT NOT NULL DEFAULT 'active',
-  last_connected_at TIMESTAMPTZ,
-  last_error TEXT NOT NULL DEFAULT '',
-  created_at TIMESTAMPTZ NOT NULL,
-  updated_at TIMESTAMPTZ NOT NULL
-);
-CREATE TABLE IF NOT EXISTS mcp_server_acl_bindings (
-  id TEXT PRIMARY KEY,
-  server_id TEXT NOT NULL,
-  subject_key TEXT NOT NULL,
-  role TEXT NOT NULL,
-  granted_by TEXT,
-  expires_at TIMESTAMPTZ,
-  created_at TIMESTAMPTZ NOT NULL,
-  UNIQUE(server_id, subject_key, role)
-);
-CREATE INDEX IF NOT EXISTS idx_mcp_server_acl_subject ON mcp_server_acl_bindings(subject_key);
-CREATE TABLE IF NOT EXISTS mcp_server_tools (
-  server_id TEXT NOT NULL,
-  tool_name TEXT NOT NULL,
-  description TEXT NOT NULL DEFAULT '',
-  input_schema_json TEXT NOT NULL DEFAULT '{}',
-  enabled BOOLEAN NOT NULL DEFAULT false,
-  discovered_at TIMESTAMPTZ NOT NULL,
-  PRIMARY KEY (server_id, tool_name)
-);
-CREATE TABLE IF NOT EXISTS mcp_server_resources (
-  server_id TEXT NOT NULL,
-  uri TEXT NOT NULL,
-  name TEXT NOT NULL DEFAULT '',
-  mime_type TEXT NOT NULL DEFAULT '',
-  description TEXT NOT NULL DEFAULT '',
-  enabled BOOLEAN NOT NULL DEFAULT false,
-  discovered_at TIMESTAMPTZ NOT NULL,
-  PRIMARY KEY (server_id, uri)
-);
-CREATE TABLE IF NOT EXISTS mcp_server_prompts (
-  server_id TEXT NOT NULL,
-  prompt_name TEXT NOT NULL,
-  description TEXT NOT NULL DEFAULT '',
-  arguments_schema_json TEXT NOT NULL DEFAULT '[]',
-  enabled BOOLEAN NOT NULL DEFAULT false,
-  discovered_at TIMESTAMPTZ NOT NULL,
-  PRIMARY KEY (server_id, prompt_name)
-);
-CREATE TABLE IF NOT EXISTS access_token_mcp_servers (
-  token_id TEXT NOT NULL,
-  server_id TEXT NOT NULL,
-  tool_allowlist TEXT[] NOT NULL DEFAULT '{}',
-  resource_allowlist TEXT[] NOT NULL DEFAULT '{}',
-  prompt_allowlist TEXT[] NOT NULL DEFAULT '{}',
-  created_at TIMESTAMPTZ NOT NULL,
-  PRIMARY KEY (token_id, server_id)
-);
-`
-	_, err := s.pool.Exec(ctx, ddl)
-	return err
+func NewStoreWithPool(_ context.Context, pool *pgxpool.Pool, cipher *secrets.Cipher) (*Store, error) {
+	return &Store{
+		pool:    pool,
+		useDB:   true,
+		cipher:  cipher,
+		servers: map[string]models.MCPServer{},
+		acl:     map[string]models.MCPServerACLBinding{},
+		secrets: map[string]secretRow{},
+	}, nil
 }
+
+func (s *Store) Pool() *pgxpool.Pool { return s.pool }
 
 func (s *Store) CreateServer(ctx context.Context, in CreateServerInput) (models.MCPServer, error) {
 	now := time.Now().UTC()

@@ -9,6 +9,7 @@ import (
 
 	"github.com/synamcps/synamcps-server/internal/access"
 	"github.com/synamcps/synamcps-server/internal/auth"
+	"github.com/synamcps/synamcps-server/internal/domainerr"
 	"github.com/synamcps/synamcps-server/internal/knowledge"
 	"github.com/synamcps/synamcps-server/internal/mcpproxy"
 	"github.com/synamcps/synamcps-server/internal/models"
@@ -25,21 +26,24 @@ type Server struct {
 	mcpAccess *mcpproxy.AccessService
 }
 
-func NewServer(sessions *session.Store, knowledgeService *knowledge.Service) *Server {
-	return &Server{sessions: sessions, knowledge: knowledgeService}
+type ServerDeps struct {
+	Sessions  *session.Store
+	Knowledge *knowledge.Service
+	Access    *access.Service
+	Usage     *usage.Service
+	Proxy     *mcpproxy.Manager
+	MCPAccess *mcpproxy.AccessService
 }
 
-func (s *Server) AttachAccess(accessService *access.Service) {
-	s.access = accessService
-}
-
-func (s *Server) AttachUsage(usageService *usage.Service) {
-	s.usage = usageService
-}
-
-func (s *Server) AttachProxy(proxy *mcpproxy.Manager, mcpAccess *mcpproxy.AccessService) {
-	s.proxy = proxy
-	s.mcpAccess = mcpAccess
+func NewServer(deps ServerDeps) *Server {
+	return &Server{
+		sessions:  deps.Sessions,
+		knowledge: deps.Knowledge,
+		access:    deps.Access,
+		usage:     deps.Usage,
+		proxy:     deps.Proxy,
+		mcpAccess: deps.MCPAccess,
+	}
 }
 
 func (s *Server) HandleInitialize(w http.ResponseWriter, p models.Principal) {
@@ -86,7 +90,7 @@ func (s *Server) HandleJSONRPC(ctx context.Context, p models.Principal, request 
 		}
 		if !ok {
 			status = "rate_limited"
-			return nil, errors.New("rate limit exceeded")
+			return nil, domainerr.ErrRateLimited
 		}
 	}
 
@@ -159,7 +163,7 @@ func (s *Server) HandleJSONRPC(ctx context.Context, p models.Principal, request 
 		}
 		if s.proxy == nil || !s.proxy.Enabled() {
 			status = "error"
-			return nil, errors.New("unknown method")
+			return nil, domainerr.ErrUnknownMethod
 		}
 		result, err := s.proxy.ReadResource(ctx, uri, servers)
 		if err != nil {
@@ -184,7 +188,7 @@ func (s *Server) HandleJSONRPC(ctx context.Context, p models.Principal, request 
 		}
 		if s.proxy == nil || !s.proxy.Enabled() {
 			status = "error"
-			return nil, errors.New("unknown method")
+			return nil, domainerr.ErrUnknownMethod
 		}
 		result, err := s.proxy.GetPrompt(ctx, name, arguments, servers)
 		if err != nil {
@@ -204,14 +208,14 @@ func (s *Server) HandleJSONRPC(ctx context.Context, p models.Principal, request 
 			SourceURL:  asString(params["sourceUrl"]),
 			Channel:    "mcp",
 		}
-		doc, err := s.knowledge.Save(ctx, p, in)
+		doc, err := s.knowledge.Save(ctx, p, accessCtx, in)
 		if err != nil {
 			status = statusFromError(err)
 			return nil, err
 		}
 		return map[string]any{"jsonrpc": "2.0", "id": id, "result": doc}, nil
 	case "knowledge.get":
-		doc, err := s.knowledge.Get(ctx, p, asString(params["docId"]))
+		doc, err := s.knowledge.Get(ctx, p, accessCtx, asString(params["docId"]))
 		if err != nil {
 			status = statusFromError(err)
 			return nil, err
@@ -219,7 +223,7 @@ func (s *Server) HandleJSONRPC(ctx context.Context, p models.Principal, request 
 		storageID = doc.StorageID
 		return map[string]any{"jsonrpc": "2.0", "id": id, "result": doc}, nil
 	case "knowledge.delete":
-		if err := s.knowledge.Delete(ctx, p, asString(params["docId"])); err != nil {
+		if err := s.knowledge.Delete(ctx, p, accessCtx, asString(params["docId"])); err != nil {
 			status = statusFromError(err)
 			return nil, err
 		}
@@ -235,7 +239,7 @@ func (s *Server) HandleJSONRPC(ctx context.Context, p models.Principal, request 
 				SourceURLMode: asString(params["sourceUrlMode"]),
 			},
 		}
-		hits, err := s.knowledge.Search(ctx, p, req, true)
+		hits, err := s.knowledge.Search(ctx, p, accessCtx, req, true)
 		if err != nil {
 			status = statusFromError(err)
 			return nil, err
@@ -243,7 +247,7 @@ func (s *Server) HandleJSONRPC(ctx context.Context, p models.Principal, request 
 		return map[string]any{"jsonrpc": "2.0", "id": id, "result": hits}, nil
 	default:
 		status = "error"
-		return nil, errors.New("unknown method")
+		return nil, domainerr.ErrUnknownMethod
 	}
 }
 
@@ -344,7 +348,7 @@ func (s *Server) handlePromptsList(ctx context.Context, p models.Principal, acce
 
 func (s *Server) buildKnowledgeTools(ctx context.Context, p models.Principal, accessCtx models.APIAccessContext) ([]map[string]any, []models.Storage, error) {
 	if s.access == nil {
-		return defaultTools(nil, true), nil, nil
+		return nil, nil, domainerr.ErrForbidden
 	}
 	storages, effective, err := s.access.AvailableStorages(ctx, p, accessCtx.AccessToken, accessCtx.AllowedStorage)
 	if err != nil {
@@ -465,8 +469,7 @@ func statusFromError(err error) string {
 	if errors.Is(err, context.Canceled) {
 		return "error"
 	}
-	msg := err.Error()
-	if msg == "forbidden" {
+	if errors.Is(err, domainerr.ErrForbidden) {
 		return "forbidden"
 	}
 	return "error"

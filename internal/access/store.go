@@ -36,21 +36,24 @@ type Store struct {
 }
 
 func NewStore(ctx context.Context, dsn string) (*Store, error) {
-	s := NewInMemoryStore()
 	if dsn == "" {
-		return s, nil
+		return NewInMemoryStore(), nil
 	}
 	pool, err := pgxpool.New(ctx, dsn)
 	if err != nil {
 		return nil, fmt.Errorf("create access pg pool: %w", err)
 	}
+	return NewStoreWithPool(ctx, pool)
+}
+
+func NewStoreWithPool(_ context.Context, pool *pgxpool.Pool) (*Store, error) {
+	s := NewInMemoryStore()
 	s.pool = pool
 	s.useDB = true
-	if err := s.migrate(ctx); err != nil {
-		return nil, err
-	}
 	return s, nil
 }
+
+func (s *Store) Pool() *pgxpool.Pool { return s.pool }
 
 func NewInMemoryStore() *Store {
 	return &Store{
@@ -61,117 +64,6 @@ func NewInMemoryStore() *Store {
 		tokens:      map[string]models.AccessToken{},
 		tokenByHash: map[string]string{},
 	}
-}
-
-func (s *Store) migrate(ctx context.Context) error {
-	ddl := `
-CREATE TABLE IF NOT EXISTS access_users (
-  id TEXT PRIMARY KEY,
-  subject_key TEXT NOT NULL UNIQUE,
-  source TEXT NOT NULL,
-  issuer TEXT,
-  external_subject TEXT NOT NULL,
-  email TEXT,
-  display_name TEXT,
-  status TEXT NOT NULL,
-  password_hash TEXT,
-  created_at TIMESTAMPTZ NOT NULL,
-  last_seen_at TIMESTAMPTZ NOT NULL
-);
-ALTER TABLE access_users ADD COLUMN IF NOT EXISTS password_hash TEXT;
-CREATE TABLE IF NOT EXISTS access_groups (
-  id TEXT PRIMARY KEY,
-  subject_key TEXT NOT NULL UNIQUE,
-  source TEXT NOT NULL,
-  issuer TEXT,
-  external_group_id TEXT,
-  name TEXT NOT NULL,
-  managed_by TEXT NOT NULL,
-  sync_status TEXT,
-  last_synced_at TIMESTAMPTZ,
-  created_at TIMESTAMPTZ NOT NULL
-);
-CREATE TABLE IF NOT EXISTS access_group_memberships (
-  group_id TEXT NOT NULL,
-  user_id TEXT NOT NULL,
-  source TEXT NOT NULL,
-  created_at TIMESTAMPTZ NOT NULL,
-  expires_at TIMESTAMPTZ,
-  PRIMARY KEY (group_id, user_id)
-);
-CREATE TABLE IF NOT EXISTS storages (
-  id TEXT PRIMARY KEY,
-  slug TEXT NOT NULL UNIQUE,
-  name TEXT NOT NULL,
-  owner_subject_key TEXT NOT NULL,
-  visibility TEXT NOT NULL,
-  default_access TEXT NOT NULL,
-  storage_kind TEXT NOT NULL,
-  s3_bucket TEXT,
-  s3_prefix TEXT NOT NULL,
-  status TEXT NOT NULL,
-  created_at TIMESTAMPTZ NOT NULL,
-  updated_at TIMESTAMPTZ NOT NULL,
-  archived_at TIMESTAMPTZ
-);
-CREATE TABLE IF NOT EXISTS storage_acl_bindings (
-  id TEXT PRIMARY KEY,
-  storage_id TEXT NOT NULL,
-  subject_key TEXT NOT NULL,
-  role TEXT NOT NULL,
-  granted_by TEXT,
-  expires_at TIMESTAMPTZ,
-  created_at TIMESTAMPTZ NOT NULL,
-  UNIQUE(storage_id, subject_key, role)
-);
-CREATE INDEX IF NOT EXISTS idx_storage_acl_subject ON storage_acl_bindings(subject_key);
-CREATE TABLE IF NOT EXISTS access_tokens (
-  id TEXT PRIMARY KEY,
-  owner_subject_key TEXT NOT NULL,
-  token_hash TEXT NOT NULL UNIQUE,
-  name TEXT NOT NULL,
-  mode TEXT NOT NULL,
-  allowed_permissions TEXT[] NOT NULL DEFAULT '{}',
-  rate_limit_enabled BOOLEAN NOT NULL DEFAULT true,
-  rate_limit_rpm INTEGER NOT NULL DEFAULT 0,
-  rate_limit_rph INTEGER NOT NULL DEFAULT 0,
-  rate_limit_rpd INTEGER NOT NULL DEFAULT 0,
-  burst_limit INTEGER NOT NULL DEFAULT 0,
-  expires_at TIMESTAMPTZ,
-  revoked_at TIMESTAMPTZ,
-  last_used_at TIMESTAMPTZ,
-  created_by TEXT,
-  created_at TIMESTAMPTZ NOT NULL
-);
-CREATE TABLE IF NOT EXISTS access_token_storages (
-  token_id TEXT NOT NULL,
-  storage_id TEXT NOT NULL,
-  max_mode TEXT NOT NULL,
-  tool_allowlist TEXT[] NOT NULL DEFAULT '{}',
-  created_at TIMESTAMPTZ NOT NULL,
-  PRIMARY KEY (token_id, storage_id)
-);
-CREATE TABLE IF NOT EXISTS access_token_mcp_servers (
-  token_id TEXT NOT NULL,
-  server_id TEXT NOT NULL,
-  tool_allowlist TEXT[] NOT NULL DEFAULT '{}',
-  resource_allowlist TEXT[] NOT NULL DEFAULT '{}',
-  prompt_allowlist TEXT[] NOT NULL DEFAULT '{}',
-  created_at TIMESTAMPTZ NOT NULL,
-  PRIMARY KEY (token_id, server_id)
-);
-CREATE TABLE IF NOT EXISTS audit_events (
-  id TEXT PRIMARY KEY,
-  actor_subject_key TEXT NOT NULL,
-  action TEXT NOT NULL,
-  resource_type TEXT NOT NULL,
-  resource_id TEXT NOT NULL,
-  storage_id TEXT,
-  created_at TIMESTAMPTZ NOT NULL
-);
-`
-	_, err := s.pool.Exec(ctx, ddl)
-	return err
 }
 
 func (s *Store) UpsertUserFromPrincipal(ctx context.Context, p models.Principal) (models.User, error) {

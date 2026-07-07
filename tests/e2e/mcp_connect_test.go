@@ -7,19 +7,24 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/synamcps/synamcps-server/internal/access"
 	"github.com/synamcps/synamcps-server/internal/config"
+	"github.com/synamcps/synamcps-server/internal/session"
 	"github.com/synamcps/synamcps-server/internal/web"
 )
 
 func TestMCPConnectPageAvailable(t *testing.T) {
-	handler := web.NewHandler(config.Config{
+	cfg := config.Config{
 		Transport: config.TransportConfig{LegacySSE: true},
 		OAuth: config.OAuthConfig{Providers: []config.ProviderConfig{
 			{Name: "keycloak"},
 			{Name: "google"},
 		}},
 		Teleport: config.TeleportConfig{Enabled: true},
-	})
+	}
+	sessions := session.NewStore(config.RedisConfig{TTLHours: 1})
+	accessSvc := access.NewService(access.NewInMemoryStore())
+	handler := web.NewHandler(cfg, sessions, accessSvc)
 
 	srv := httptest.NewServer(handler)
 	defer srv.Close()

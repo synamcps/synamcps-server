@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -45,6 +46,7 @@ func (c Config) MCPProxySecretsKey() string {
 
 type ServerConfig struct {
 	ListenAddr string `yaml:"listen_addr"`
+	DevMode    bool   `yaml:"dev_mode"`
 }
 
 type TransportConfig struct {
@@ -115,8 +117,10 @@ type VectorBackendConfig struct {
 }
 
 type MetadataConfig struct {
-	Driver string `yaml:"driver"`
-	DSN    string `yaml:"dsn"`
+	Driver       string `yaml:"driver"`
+	DSN          string `yaml:"dsn"`
+	PoolMaxConns int32  `yaml:"pool_max_conns"`
+	PoolMinConns int32  `yaml:"pool_min_conns"`
 }
 
 type ChunkingConfig struct {
@@ -215,7 +219,7 @@ func Load(path string) (Config, error) {
 	return cfg, nil
 }
 
-func (c Config) Validate() error {
+func (c *Config) Validate() error {
 	if c.Server.ListenAddr == "" {
 		return errors.New("server.listen_addr is required")
 	}
@@ -261,6 +265,12 @@ func (c Config) Validate() error {
 	if c.Metadata.DSN == "" {
 		return errors.New("metadata_catalog.dsn is required")
 	}
+	if c.Metadata.PoolMaxConns <= 0 {
+		c.Metadata.PoolMaxConns = 20
+	}
+	if c.Metadata.PoolMinConns <= 0 {
+		c.Metadata.PoolMinConns = 2
+	}
 	if len(c.API.AllowedOrigins) == 0 {
 		return errors.New("api.allowed_origins must not be empty")
 	}
@@ -268,8 +278,28 @@ func (c Config) Validate() error {
 		if p.Issuer == "" || p.Audience == "" {
 			return fmt.Errorf("oauth provider %q missing issuer/audience", p.Name)
 		}
+		if p.JWKSURL == "insecure" {
+			if !c.Server.DevMode {
+				return fmt.Errorf("oauth provider %q uses jwks_url=insecure but server.dev_mode is false", p.Name)
+			}
+			if !isLoopbackListenAddr(c.Server.ListenAddr) {
+				return fmt.Errorf("oauth provider %q uses jwks_url=insecure but listen_addr %q is not loopback-only", p.Name, c.Server.ListenAddr)
+			}
+		}
 	}
 	return nil
+}
+
+func isLoopbackListenAddr(addr string) bool {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		host = strings.TrimPrefix(addr, ":")
+	}
+	if host == "" || host == "localhost" || host == "127.0.0.1" || host == "::1" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 func resolveSecret(value string) string {

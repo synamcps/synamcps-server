@@ -14,9 +14,10 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/synamcps/synamcps-server/internal/access"
 	"github.com/synamcps/synamcps-server/internal/auth"
 	"github.com/synamcps/synamcps-server/internal/config"
-	"github.com/synamcps/synamcps-server/internal/access"
 	"github.com/synamcps/synamcps-server/internal/httpapi"
 	"github.com/synamcps/synamcps-server/internal/knowledge"
 	"github.com/synamcps/synamcps-server/internal/knowledge/ingest"
@@ -28,6 +29,8 @@ import (
 	"github.com/synamcps/synamcps-server/internal/session"
 	"github.com/synamcps/synamcps-server/internal/storage/blob"
 	metapg "github.com/synamcps/synamcps-server/internal/storage/meta/postgres"
+	"github.com/synamcps/synamcps-server/internal/storage/migrate"
+	"github.com/synamcps/synamcps-server/internal/storage/pgconn"
 	"github.com/synamcps/synamcps-server/internal/storage/vector"
 	"github.com/synamcps/synamcps-server/internal/storage/vector/pgvector"
 	"github.com/synamcps/synamcps-server/internal/storage/vector/qdrant"
@@ -47,37 +50,57 @@ func main() {
 	if err != nil {
 		log.Fatalf("load config: %v", err)
 	}
+	warnInsecureJWKS(cfg)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
 	sessions := session.NewStore(cfg.Redis)
 	gateway := auth.NewGateway(cfg)
-	accessStore, err := access.NewStore(context.Background(), cfg.Metadata.DSN)
+
+	var pgPool *pgxpool.Pool
+	if cfg.Metadata.DSN != "" {
+		pgPool, err = pgconn.NewPool(ctx, cfg.Metadata)
+		if err != nil {
+			log.Fatalf("init postgres pool: %v", err)
+		}
+		if err := migrate.Up(pgPool, ""); err != nil {
+			log.Fatalf("apply migrations: %v", err)
+		}
+	}
+
+	accessStore, err := initAccessStore(ctx, pgPool, cfg.Metadata.DSN)
 	if err != nil {
 		log.Fatalf("init access store: %v", err)
 	}
-	accessService := access.NewService(accessStore)
+
 	var mcpStore *mcpproxy.Store
 	var mcpManager *mcpproxy.Manager
 	var mcpAccess *mcpproxy.AccessService
+	accessOpts := []access.ServiceOption{}
 	if cfg.MCPProxy.Enabled {
 		cipher, err := secrets.NewCipher(cfg.MCPProxySecretsKey())
 		if err != nil {
 			log.Printf("mcp proxy secrets disabled: %v", err)
 		} else {
-			mcpStore, err = mcpproxy.NewStore(context.Background(), cfg.Metadata.DSN, cipher)
+			mcpStore, err = initMCPStore(ctx, pgPool, cfg.Metadata.DSN, cipher)
 			if err != nil {
 				log.Fatalf("init mcp proxy store: %v", err)
 			}
 			mcpManager = mcpproxy.NewManager(cfg.MCPProxy, mcpStore)
 			mcpAccess = mcpproxy.NewAccessService(mcpStore)
-			accessService.AttachMCPStore(mcpStore)
+			accessOpts = append(accessOpts, access.WithMCPScopeLoader(mcpStore))
 		}
 	}
+	accessService := access.NewService(accessStore, accessOpts...)
 	gateway.SetOpaqueTokenResolver(accessService)
+
 	usageService := usage.NewService(cfg.Redis, cfg.Usage)
 	if cfg.Usage.Exporters.VictoriaMetrics.Enabled {
-		usageService.StartVictoriaMetricsExporter(context.Background(), cfg.Usage.Exporters.VictoriaMetrics.RemoteWriteURL, time.Duration(cfg.Usage.Exporters.VictoriaMetrics.IntervalSeconds)*time.Second)
+		usageService.StartVictoriaMetricsExporter(ctx, cfg.Usage.Exporters.VictoriaMetrics.RemoteWriteURL, time.Duration(cfg.Usage.Exporters.VictoriaMetrics.IntervalSeconds)*time.Second)
 	}
-	catalog, err := metapg.New(context.Background(), cfg.Metadata.DSN)
+
+	catalog, err := initCatalog(ctx, pgPool, cfg.Metadata.DSN)
 	if err != nil {
 		log.Fatalf("init metadata catalog: %v", err)
 	}
@@ -92,17 +115,20 @@ func main() {
 			log.Fatalf("init qdrant store: %v", err)
 		}
 	} else {
-		vec, err = pgvector.New(context.Background(), cfg.Metadata.DSN)
+		vecStore, err := initVectorStore(ctx, pgPool, cfg.Metadata.DSN)
 		if err != nil {
 			log.Fatalf("init pgvector store: %v", err)
 		}
+		vec = vecStore
 	}
 
 	summarizer := llm.NewSimpleSummarizer(cfg.Summarization)
 	embedder := llm.NewSimpleEmbeddingProvider(cfg.Embedding)
 	pipeline := ingest.NewPipeline(cfg, summarizer, embedder, vec, catalog, blobStore)
-	knowledgeService := knowledge.NewService(catalog, vec, pipeline)
-	knowledgeService.AttachAccess(accessService, cfg.S3.Bucket)
+	knowledgeService, err := knowledge.NewService(catalog, vec, pipeline, accessService, cfg.S3.Bucket)
+	if err != nil {
+		log.Fatalf("init knowledge service: %v", err)
+	}
 
 	rootMux := http.NewServeMux()
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
@@ -138,12 +164,14 @@ func main() {
 		rootMux.Handle("/", web.NewHandler(cfg, sessions, accessService))
 	}
 
-	mcpServer := mcp.NewServer(sessions, knowledgeService)
-	mcpServer.AttachAccess(accessService)
-	mcpServer.AttachUsage(usageService)
-	if mcpManager != nil {
-		mcpServer.AttachProxy(mcpManager, mcpAccess)
-	}
+	mcpServer := mcp.NewServer(mcp.ServerDeps{
+		Sessions:  sessions,
+		Knowledge: knowledgeService,
+		Access:    accessService,
+		Usage:     usageService,
+		Proxy:     mcpManager,
+		MCPAccess: mcpAccess,
+	})
 	if cfg.Transport.StreamableHTTP {
 		streamablehttp.NewHandler(mcpServer, gateway, sessions).Register(rootMux)
 	}
@@ -170,9 +198,55 @@ func main() {
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
 	<-stop
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	_ = server.Shutdown(ctx)
+
+	cancel()
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer shutdownCancel()
+	sessions.EvictExpired()
+	_ = sessions.Close()
+	_ = server.Shutdown(shutdownCtx)
+	if pgPool != nil {
+		pgPool.Close()
+	}
+}
+
+func initAccessStore(ctx context.Context, pool *pgxpool.Pool, dsn string) (*access.Store, error) {
+	if pool != nil {
+		return access.NewStoreWithPool(ctx, pool)
+	}
+	return access.NewStore(ctx, dsn)
+}
+
+func initCatalog(ctx context.Context, pool *pgxpool.Pool, dsn string) (*metapg.Store, error) {
+	if pool != nil {
+		return metapg.NewWithPool(ctx, pool)
+	}
+	return metapg.New(ctx, dsn)
+}
+
+func initVectorStore(ctx context.Context, pool *pgxpool.Pool, dsn string) (*pgvector.Store, error) {
+	if pool != nil {
+		return pgvector.NewWithPool(ctx, pool)
+	}
+	return pgvector.New(ctx, dsn)
+}
+
+func initMCPStore(ctx context.Context, pool *pgxpool.Pool, dsn string, cipher *secrets.Cipher) (*mcpproxy.Store, error) {
+	if pool != nil {
+		return mcpproxy.NewStoreWithPool(ctx, pool, cipher)
+	}
+	return mcpproxy.NewStore(ctx, dsn, cipher)
+}
+
+func warnInsecureJWKS(cfg config.Config) {
+	if !cfg.Server.DevMode {
+		return
+	}
+	for _, p := range cfg.OAuth.Providers {
+		if p.JWKSURL == "insecure" {
+			log.Printf("WARNING: dev_mode enabled with jwks_url=insecure for provider %q — JWT signatures are NOT verified", p.Name)
+		}
+	}
 }
 
 func buildAuthMethods(cfg config.Config) []string {

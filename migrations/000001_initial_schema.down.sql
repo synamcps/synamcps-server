@@ -1,0 +1,16 @@
+DROP TABLE IF EXISTS knowledge_vectors;
+DROP TABLE IF EXISTS knowledge_documents;
+DROP TABLE IF EXISTS access_token_mcp_servers;
+DROP TABLE IF EXISTS mcp_server_prompts;
+DROP TABLE IF EXISTS mcp_server_resources;
+DROP TABLE IF EXISTS mcp_server_tools;
+DROP TABLE IF EXISTS mcp_server_acl_bindings;
+DROP TABLE IF EXISTS mcp_servers;
+DROP TABLE IF EXISTS audit_events;
+DROP TABLE IF EXISTS access_token_storages;
+DROP TABLE IF EXISTS access_tokens;
+DROP TABLE IF EXISTS storage_acl_bindings;
+DROP TABLE IF EXISTS storages;
+DROP TABLE IF EXISTS access_group_memberships;
+DROP TABLE IF EXISTS access_groups;
+DROP TABLE IF EXISTS access_users;

@@ -3,12 +3,12 @@ package mcpproxy
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"sync"
 	"time"
 
 	"github.com/synamcps/synamcps-server/internal/config"
+	"github.com/synamcps/synamcps-server/internal/domainerr"
 	"github.com/synamcps/synamcps-server/internal/models"
 )
 
@@ -205,8 +205,9 @@ func (m *Manager) CallTool(ctx context.Context, namespaced string, arguments map
 	if err != nil {
 		return nil, err
 	}
-	if !allow(findScope(servers, srv.ID).ToolAllowlist, namespaced) {
-		return nil, errors.New("forbidden")
+	scope, ok := findScope(servers, srv.ID)
+	if !ok || !allow(scope.ToolAllowlist, namespaced) {
+		return nil, domainerr.ErrForbidden
 	}
 	client, err := m.getClient(ctx, srv.ID)
 	if err != nil {
@@ -230,8 +231,9 @@ func (m *Manager) ReadResource(ctx context.Context, uri string, servers []Access
 	if err != nil {
 		return nil, err
 	}
-	if !allow(findScope(servers, srv.ID).ResourceAllowlist, uri) {
-		return nil, errors.New("forbidden")
+	scope, ok := findScope(servers, srv.ID)
+	if !ok || !allow(scope.ResourceAllowlist, uri) {
+		return nil, domainerr.ErrForbidden
 	}
 	client, err := m.getClient(ctx, srv.ID)
 	if err != nil {
@@ -249,8 +251,9 @@ func (m *Manager) GetPrompt(ctx context.Context, namespaced string, arguments ma
 	if err != nil {
 		return nil, err
 	}
-	if !allow(findScope(servers, srv.ID).PromptAllowlist, namespaced) {
-		return nil, errors.New("forbidden")
+	scope, ok := findScope(servers, srv.ID)
+	if !ok || !allow(scope.PromptAllowlist, namespaced) {
+		return nil, domainerr.ErrForbidden
 	}
 	client, err := m.getClient(ctx, srv.ID)
 	if err != nil {
@@ -259,22 +262,22 @@ func (m *Manager) GetPrompt(ctx context.Context, namespaced string, arguments ma
 	return client.getPrompt(ctx, prompt, arguments)
 }
 
-func (m *Manager) findServerBySlug(ctx context.Context, slug string, servers []AccessibleServer) (models.MCPServer, error) {
+func (m *Manager) findServerBySlug(_ context.Context, slug string, servers []AccessibleServer) (models.MCPServer, error) {
 	for _, item := range servers {
 		if item.Server.Slug == slug {
 			return item.Server, nil
 		}
 	}
-	return m.store.GetServerBySlug(ctx, slug)
+	return models.MCPServer{}, domainerr.ErrForbidden
 }
 
-func findScope(servers []AccessibleServer, serverID string) models.AccessTokenMCPServer {
+func findScope(servers []AccessibleServer, serverID string) (models.AccessTokenMCPServer, bool) {
 	for _, item := range servers {
 		if item.Server.ID == serverID {
-			return item.Scope
+			return item.Scope, true
 		}
 	}
-	return models.AccessTokenMCPServer{}
+	return models.AccessTokenMCPServer{}, false
 }
 
 func (m *Manager) HasProxiedTool(name string) bool {

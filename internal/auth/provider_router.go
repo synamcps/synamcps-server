@@ -20,36 +20,10 @@ type ProviderRouter struct {
 }
 
 func NewProviderRouter(cfg config.Config) *ProviderRouter {
-	r := &ProviderRouter{
+	return &ProviderRouter{
 		cfg:      cfg,
 		verifier: map[string]jwt.Keyfunc{},
 	}
-	r.bootstrapVerifiers()
-	return r
-}
-
-func (r *ProviderRouter) bootstrapVerifiers() {
-	for _, p := range r.cfg.OAuth.Providers {
-		r.configureVerifier(p.Issuer, p.JWKSURL)
-	}
-	if r.cfg.Teleport.Enabled && r.cfg.Teleport.Issuer != "" {
-		// Teleport can also expose JWKS endpoint; fallback to standard pattern if not configured.
-		jwksURL := strings.TrimRight(r.cfg.Teleport.Issuer, "/") + "/.well-known/jwks.json"
-		r.configureVerifier(r.cfg.Teleport.Issuer, jwksURL)
-	}
-}
-
-func (r *ProviderRouter) configureVerifier(issuer, jwksURL string) {
-	if issuer == "" || jwksURL == "" {
-		return
-	}
-	provider, err := keyfunc.NewDefaultCtx(context.Background(), []string{jwksURL})
-	if err != nil {
-		return
-	}
-	r.mu.Lock()
-	r.verifier[issuer] = provider.Keyfunc
-	r.mu.Unlock()
 }
 
 func (r *ProviderRouter) VerifyAndParseClaims(ctx context.Context, rawToken string) (tokenClaims, error) {
@@ -63,6 +37,9 @@ func (r *ProviderRouter) VerifyAndParseClaims(ctx context.Context, rawToken stri
 		return tokenClaims{}, errors.New("missing issuer")
 	}
 	if p, err := r.providerByIssuer(unverified.Issuer); err == nil && p.JWKSURL == "insecure" {
+		if !r.cfg.Server.DevMode {
+			return tokenClaims{}, errors.New("insecure jwks requires server.dev_mode")
+		}
 		if len(unverified.Scopes) == 0 && unverified.Scope != "" {
 			unverified.Scopes = strings.Fields(unverified.Scope)
 		}
@@ -102,6 +79,9 @@ func (r *ProviderRouter) keyfuncByIssuer(ctx context.Context, issuer string) (jw
 	}
 	if provider.JWKSURL == "" {
 		return nil, fmt.Errorf("no jwks configured for issuer %q", issuer)
+	}
+	if provider.JWKSURL == "insecure" {
+		return nil, fmt.Errorf("insecure jwks does not use keyfunc for issuer %q", issuer)
 	}
 	kf, err := keyfunc.NewDefaultCtx(ctx, []string{provider.JWKSURL})
 	if err != nil {
@@ -192,6 +172,12 @@ func (r *ProviderRouter) providerByIssuer(issuer string) (config.ProviderConfig,
 		if p.Issuer == issuer {
 			return p, nil
 		}
+	}
+	if r.cfg.Teleport.Enabled && issuer == r.cfg.Teleport.Issuer {
+		return config.ProviderConfig{
+			Issuer:  issuer,
+			JWKSURL: strings.TrimRight(r.cfg.Teleport.Issuer, "/") + "/.well-known/jwks.json",
+		}, nil
 	}
 	return config.ProviderConfig{}, fmt.Errorf("unknown provider issuer: %s", issuer)
 }

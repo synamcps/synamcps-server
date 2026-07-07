@@ -46,6 +46,14 @@ func principalFromRequest(r *http.Request) (models.Principal, bool) {
 	return auth.PrincipalFromContext(r.Context())
 }
 
+func accessContextFromRequest(r *http.Request) models.APIAccessContext {
+	if ac, ok := auth.AccessContextFromContext(r.Context()); ok {
+		return ac
+	}
+	p, _ := auth.PrincipalFromContext(r.Context())
+	return models.APIAccessContext{Principal: p}
+}
+
 // rateLimitMiddleware enforces per-token rate limits on the REST API for
 // requests authenticated with an access token. It must run after the auth
 // middleware so the access context is populated. Requests authenticated via web

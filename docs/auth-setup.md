@@ -17,6 +17,15 @@
 Add provider entry with `issuer`, `audience`, `jwks_url`.
 Tokens are verified using provider JWKS and strict issuer/audience checks.
 
+## Development: unsigned JWT (`jwks_url: insecure`)
+
+For local development only, a provider may set `jwks_url: insecure` to skip JWT
+signature verification. This mode is **blocked unless** `server.dev_mode: true`
+is set in config, and it is **rejected** when `listen_addr` binds to a non-loopback
+interface. On startup the server logs a prominent warning when insecure mode is active.
+
+Never enable `dev_mode` or `jwks_url: insecure` in production.
+
 ## Teleport Proxy JWT
 
 Enable `teleport.enabled`.

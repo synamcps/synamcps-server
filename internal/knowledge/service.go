@@ -3,13 +3,11 @@ package knowledge
 import (
 	"context"
 	"errors"
-	"strings"
 
 	"github.com/synamcps/synamcps-server/internal/access"
-	"github.com/synamcps/synamcps-server/internal/auth"
+	"github.com/synamcps/synamcps-server/internal/domainerr"
 	"github.com/synamcps/synamcps-server/internal/knowledge/ingest"
 	"github.com/synamcps/synamcps-server/internal/models"
-	"github.com/synamcps/synamcps-server/internal/policy"
 	"github.com/synamcps/synamcps-server/internal/storage/meta"
 	"github.com/synamcps/synamcps-server/internal/storage/vector"
 )
@@ -22,13 +20,17 @@ type Service struct {
 	s3Bucket    string
 }
 
-func NewService(c meta.Catalog, v vector.Store, p *ingest.Pipeline) *Service {
-	return &Service{catalog: c, vectorStore: v, pipeline: p}
-}
-
-func (s *Service) AttachAccess(accessService *access.Service, s3Bucket string) {
-	s.access = accessService
-	s.s3Bucket = s3Bucket
+func NewService(c meta.Catalog, v vector.Store, p *ingest.Pipeline, accessService *access.Service, s3Bucket string) (*Service, error) {
+	if accessService == nil {
+		return nil, errors.New("access service is required")
+	}
+	return &Service{
+		catalog:     c,
+		vectorStore: v,
+		pipeline:    p,
+		access:      accessService,
+		s3Bucket:    s3Bucket,
+	}, nil
 }
 
 type SaveInput struct {
@@ -43,7 +45,7 @@ type SaveInput struct {
 	Channel    string            `json:"-"`
 }
 
-func (s *Service) Save(ctx context.Context, p models.Principal, in SaveInput) (models.DocumentRecord, error) {
+func (s *Service) Save(ctx context.Context, p models.Principal, ac models.APIAccessContext, in SaveInput) (models.DocumentRecord, error) {
 	if in.Visibility == "" {
 		in.Visibility = models.VisibilityPersonal
 	}
@@ -52,32 +54,31 @@ func (s *Service) Save(ctx context.Context, p models.Principal, in SaveInput) (m
 	}
 	storageID := in.StorageID
 	s3Prefix := ""
-	if s.access != nil {
-		if storageID == "" {
-			_, st, err := s.access.EnsurePrincipal(ctx, p, s.s3Bucket)
-			if err != nil {
-				return models.DocumentRecord{}, err
-			}
-			storageID = st.ID
-			s3Prefix = st.S3Prefix
-		} else {
-			st, ok, err := s.access.Store().GetStorage(ctx, storageID)
-			if err != nil {
-				return models.DocumentRecord{}, err
-			}
-			if !ok {
-				return models.DocumentRecord{}, errors.New("storage not found")
-			}
-			s3Prefix = st.S3Prefix
+	if storageID == "" {
+		_, st, err := s.access.EnsurePrincipal(ctx, p, s.s3Bucket)
+		if err != nil {
+			return models.DocumentRecord{}, err
 		}
-		if _, ok, err := s.access.CanAccessStorage(ctx, p, accessTokenFromContext(ctx), tokenScopesFromContext(ctx), storageID, models.PermissionDocumentCreate); err != nil || !ok {
-			if err != nil {
-				return models.DocumentRecord{}, err
-			}
-			return models.DocumentRecord{}, errors.New("forbidden")
+		storageID = st.ID
+		s3Prefix = st.S3Prefix
+	} else {
+		st, ok, err := s.access.Store().GetStorage(ctx, storageID)
+		if err != nil {
+			return models.DocumentRecord{}, err
 		}
-	} else if !policy.CanWrite(p, in.Visibility, in.GroupIDs) {
-		return models.DocumentRecord{}, errors.New("forbidden")
+		if !ok {
+			return models.DocumentRecord{}, domainerr.ErrNotFound
+		}
+		s3Prefix = st.S3Prefix
+	}
+	if _, ok, err := s.access.CanAccessStorage(ctx, p, ac.AccessToken, ac.AllowedStorage, storageID, models.PermissionDocumentCreate); err != nil || !ok {
+		if err != nil {
+			return models.DocumentRecord{}, err
+		}
+		return models.DocumentRecord{}, domainerr.ErrForbidden
+	}
+	if !access.CanWriteVisibility(p, in.Visibility, in.GroupIDs) {
+		return models.DocumentRecord{}, domainerr.ErrForbidden
 	}
 	return s.pipeline.Save(ctx, ingest.SaveRequest{
 		Principal:  p,
@@ -107,7 +108,7 @@ type BinaryInput struct {
 	Channel    string            `json:"-"`
 }
 
-func (s *Service) IngestBinary(ctx context.Context, p models.Principal, in BinaryInput) (models.DocumentRecord, error) {
+func (s *Service) IngestBinary(ctx context.Context, p models.Principal, ac models.APIAccessContext, in BinaryInput) (models.DocumentRecord, error) {
 	if in.Visibility == "" {
 		in.Visibility = models.VisibilityPersonal
 	}
@@ -116,32 +117,31 @@ func (s *Service) IngestBinary(ctx context.Context, p models.Principal, in Binar
 	}
 	storageID := in.StorageID
 	s3Prefix := ""
-	if s.access != nil {
-		if storageID == "" {
-			_, st, err := s.access.EnsurePrincipal(ctx, p, s.s3Bucket)
-			if err != nil {
-				return models.DocumentRecord{}, err
-			}
-			storageID = st.ID
-			s3Prefix = st.S3Prefix
-		} else {
-			st, ok, err := s.access.Store().GetStorage(ctx, storageID)
-			if err != nil {
-				return models.DocumentRecord{}, err
-			}
-			if !ok {
-				return models.DocumentRecord{}, errors.New("storage not found")
-			}
-			s3Prefix = st.S3Prefix
+	if storageID == "" {
+		_, st, err := s.access.EnsurePrincipal(ctx, p, s.s3Bucket)
+		if err != nil {
+			return models.DocumentRecord{}, err
 		}
-		if _, ok, err := s.access.CanAccessStorage(ctx, p, accessTokenFromContext(ctx), tokenScopesFromContext(ctx), storageID, models.PermissionDocumentCreate); err != nil || !ok {
-			if err != nil {
-				return models.DocumentRecord{}, err
-			}
-			return models.DocumentRecord{}, errors.New("forbidden")
+		storageID = st.ID
+		s3Prefix = st.S3Prefix
+	} else {
+		st, ok, err := s.access.Store().GetStorage(ctx, storageID)
+		if err != nil {
+			return models.DocumentRecord{}, err
 		}
-	} else if !policy.CanWrite(p, in.Visibility, in.GroupIDs) {
-		return models.DocumentRecord{}, errors.New("forbidden")
+		if !ok {
+			return models.DocumentRecord{}, domainerr.ErrNotFound
+		}
+		s3Prefix = st.S3Prefix
+	}
+	if _, ok, err := s.access.CanAccessStorage(ctx, p, ac.AccessToken, ac.AllowedStorage, storageID, models.PermissionDocumentCreate); err != nil || !ok {
+		if err != nil {
+			return models.DocumentRecord{}, err
+		}
+		return models.DocumentRecord{}, domainerr.ErrForbidden
+	}
+	if !access.CanWriteVisibility(p, in.Visibility, in.GroupIDs) {
+		return models.DocumentRecord{}, domainerr.ErrForbidden
 	}
 
 	return s.pipeline.SaveBinary(ctx, ingest.BinarySaveRequest{
@@ -160,65 +160,44 @@ func (s *Service) IngestBinary(ctx context.Context, p models.Principal, in Binar
 	})
 }
 
-func (s *Service) Get(ctx context.Context, p models.Principal, id string) (models.DocumentRecord, error) {
+func (s *Service) Get(ctx context.Context, p models.Principal, ac models.APIAccessContext, id string) (models.DocumentRecord, error) {
 	doc, ok, err := s.catalog.Get(ctx, id)
 	if err != nil {
 		return models.DocumentRecord{}, err
 	}
 	if !ok {
-		return models.DocumentRecord{}, errors.New("not found")
+		return models.DocumentRecord{}, domainerr.ErrNotFound
 	}
-	if !s.canReadDoc(ctx, p, doc) {
-		return models.DocumentRecord{}, errors.New("forbidden")
+	if !s.canReadDoc(ctx, p, ac, doc) {
+		return models.DocumentRecord{}, domainerr.ErrForbidden
 	}
 	return doc, nil
 }
 
-func (s *Service) List(ctx context.Context, p models.Principal, page models.PageRequest) (models.PaginatedKnowledgeList, error) {
-	if s.access != nil {
-		// Resolve the readable storage set once, then let the catalog apply
-		// authorization + visibility inside SQL. This keeps pagination counts
-		// correct and avoids a permission query per returned row.
-		readable, err := s.access.ReadableStorageIDs(ctx, p, accessTokenFromContext(ctx), tokenScopesFromContext(ctx))
-		if err != nil {
-			return models.PaginatedKnowledgeList{}, err
-		}
-		if page.StorageID != "" {
-			if _, ok := readable[page.StorageID]; !ok {
-				return models.PaginatedKnowledgeList{}, errors.New("forbidden")
-			}
-			page.AllowedStorageIDs = []string{page.StorageID}
-		} else {
-			if len(readable) == 0 {
-				return emptyPage(page), nil
-			}
-			ids := make([]string, 0, len(readable))
-			for id := range readable {
-				ids = append(ids, id)
-			}
-			page.AllowedStorageIDs = ids
-		}
-		page.ApplyVisibility = true
-		page.VisibilityOwnerIDs = ownerIdentifiers(p)
-		page.VisibilityGroups = p.Groups
-		return s.catalog.List(ctx, page)
-	}
-
-	// Legacy path (no access service): policy-based post-filter.
-	all, err := s.catalog.List(ctx, page)
+func (s *Service) List(ctx context.Context, p models.Principal, ac models.APIAccessContext, page models.PageRequest) (models.PaginatedKnowledgeList, error) {
+	readable, err := s.access.ReadableStorageIDs(ctx, p, ac.AccessToken, ac.AllowedStorage)
 	if err != nil {
 		return models.PaginatedKnowledgeList{}, err
 	}
-	filtered := make([]models.DocumentRecord, 0, len(all.Items))
-	for _, d := range all.Items {
-		if policy.CanRead(p, d) {
-			filtered = append(filtered, d)
+	if page.StorageID != "" {
+		if _, ok := readable[page.StorageID]; !ok {
+			return models.PaginatedKnowledgeList{}, domainerr.ErrForbidden
 		}
+		page.AllowedStorageIDs = []string{page.StorageID}
+	} else {
+		if len(readable) == 0 {
+			return emptyPage(page), nil
+		}
+		ids := make([]string, 0, len(readable))
+		for id := range readable {
+			ids = append(ids, id)
+		}
+		page.AllowedStorageIDs = ids
 	}
-	all.Items = filtered
-	all.Total = int64(len(filtered))
-	all.HasNext = int64(all.Page*all.PageSize) < all.Total
-	return all, nil
+	page.ApplyVisibility = true
+	page.VisibilityOwnerIDs = ownerIdentifiers(p)
+	page.VisibilityGroups = p.Groups
+	return s.catalog.List(ctx, page)
 }
 
 func emptyPage(page models.PageRequest) models.PaginatedKnowledgeList {
@@ -249,23 +228,22 @@ func ownerIdentifiers(p models.Principal) []string {
 	return out
 }
 
-func (s *Service) Delete(ctx context.Context, p models.Principal, id string) error {
+func (s *Service) Delete(ctx context.Context, p models.Principal, ac models.APIAccessContext, id string) error {
 	doc, ok, err := s.catalog.Get(ctx, id)
 	if err != nil {
 		return err
 	}
 	if !ok {
-		return errors.New("not found")
+		return domainerr.ErrNotFound
 	}
-	if s.access != nil {
-		if _, ok, err := s.access.CanAccessStorage(ctx, p, accessTokenFromContext(ctx), tokenScopesFromContext(ctx), doc.StorageID, models.PermissionDocumentDelete); err != nil || !ok {
-			if err != nil {
-				return err
-			}
-			return errors.New("forbidden")
+	if _, ok, err := s.access.CanAccessStorage(ctx, p, ac.AccessToken, ac.AllowedStorage, doc.StorageID, models.PermissionDocumentDelete); err != nil || !ok {
+		if err != nil {
+			return err
 		}
-	} else if !policy.CanDelete(p, doc) {
-		return errors.New("forbidden")
+		return domainerr.ErrForbidden
+	}
+	if !access.CanDeleteDocument(p, doc) {
+		return domainerr.ErrForbidden
 	}
 	if err := s.vectorStore.DeleteByDocID(ctx, id); err != nil {
 		return err
@@ -273,19 +251,15 @@ func (s *Service) Delete(ctx context.Context, p models.Principal, id string) err
 	return s.catalog.Delete(ctx, id)
 }
 
-func (s *Service) Search(ctx context.Context, p models.Principal, req models.SearchRequest, allowPartial bool) ([]models.SearchHit, error) {
+func (s *Service) Search(ctx context.Context, p models.Principal, ac models.APIAccessContext, req models.SearchRequest, allowPartial bool) ([]models.SearchHit, error) {
 	page := req.Filters
-	var readable map[string]struct{}
-	if s.access != nil {
-		var err error
-		readable, err = s.access.ReadableStorageIDs(ctx, p, accessTokenFromContext(ctx), tokenScopesFromContext(ctx))
-		if err != nil {
-			return nil, err
-		}
-		if page.StorageID != "" {
-			if _, ok := readable[page.StorageID]; !ok {
-				return nil, errors.New("forbidden")
-			}
+	readable, err := s.access.ReadableStorageIDs(ctx, p, ac.AccessToken, ac.AllowedStorage)
+	if err != nil {
+		return nil, err
+	}
+	if page.StorageID != "" {
+		if _, ok := readable[page.StorageID]; !ok {
+			return nil, domainerr.ErrForbidden
 		}
 	}
 
@@ -331,24 +305,14 @@ func (s *Service) Search(ctx context.Context, p models.Principal, req models.Sea
 	return hits, nil
 }
 
-func (s *Service) canReadDoc(ctx context.Context, p models.Principal, d models.DocumentRecord) bool {
-	if s.access == nil {
-		return policy.CanRead(p, d)
-	}
-	if _, ok, err := s.access.CanAccessStorage(ctx, p, accessTokenFromContext(ctx), tokenScopesFromContext(ctx), d.StorageID, models.PermissionDocumentRead); err != nil || !ok {
+func (s *Service) canReadDoc(ctx context.Context, p models.Principal, ac models.APIAccessContext, d models.DocumentRecord) bool {
+	if _, ok, err := s.access.CanAccessStorage(ctx, p, ac.AccessToken, ac.AllowedStorage, d.StorageID, models.PermissionDocumentRead); err != nil || !ok {
 		return false
 	}
-	// Storage access is necessary but not sufficient: a "personal" document must
-	// only be visible to its owner, even to others who can read the storage.
 	return canSeeVisibility(p, d)
 }
 
-// canReadDocCached is canReadDoc using a pre-computed readable-storage set,
-// avoiding a per-document permission query in hot loops (e.g. search results).
 func (s *Service) canReadDocCached(p models.Principal, d models.DocumentRecord, readable map[string]struct{}) bool {
-	if s.access == nil {
-		return policy.CanRead(p, d)
-	}
 	if _, ok := readable[d.StorageID]; !ok {
 		return false
 	}
@@ -359,26 +323,23 @@ func (s *Service) embedQuery(ctx context.Context, query string) ([]float32, erro
 	if s.pipeline != nil {
 		return s.pipeline.Embed(ctx, query)
 	}
-	return []float32{0.1, 0.2}, nil
+	return nil, errors.New("embedding pipeline not configured")
 }
 
-// canSeeVisibility enforces per-document visibility on top of storage access.
-// Empty/unknown visibility falls back to storage-level access (allow) to avoid
-// hiding legacy records that predate the visibility field.
 func canSeeVisibility(p models.Principal, d models.DocumentRecord) bool {
 	switch d.Visibility {
 	case models.VisibilityPublic:
 		return true
 	case models.VisibilityPersonal:
-		return ownsDocument(p, d)
+		return ownsDocumentKnowledge(p, d)
 	case models.VisibilityGroup:
-		return ownsDocument(p, d) || intersectsStrings(d.GroupIDs, p.Groups)
+		return ownsDocumentKnowledge(p, d) || intersectsStrings(d.GroupIDs, p.Groups)
 	default:
 		return true
 	}
 }
 
-func ownsDocument(p models.Principal, d models.DocumentRecord) bool {
+func ownsDocumentKnowledge(p models.Principal, d models.DocumentRecord) bool {
 	if d.OwnerID == "" {
 		return false
 	}
@@ -398,32 +359,43 @@ func intersectsStrings(a, b []string) bool {
 	return false
 }
 
-func accessTokenFromContext(ctx context.Context) *models.AccessToken {
-	ac, ok := auth.AccessContextFromContext(ctx)
-	if !ok {
-		return nil
-	}
-	return ac.AccessToken
-}
-
-func tokenScopesFromContext(ctx context.Context) []models.AccessTokenStorage {
-	ac, ok := auth.AccessContextFromContext(ctx)
-	if !ok {
-		return nil
-	}
-	return ac.AllowedStorage
-}
-
 func extractSnippet(text, query string) string {
 	if query == "" {
 		return text
 	}
-	lower := strings.ToLower(text)
-	q := strings.ToLower(query)
-	idx := strings.Index(lower, q)
+	runes := []rune(text)
+	lower := make([]rune, len(runes))
+	qRunes := []rune(query)
+	for i, r := range runes {
+		lower[i] = r
+		if r >= 'A' && r <= 'Z' {
+			lower[i] = r + ('a' - 'A')
+		}
+	}
+	qLower := make([]rune, len(qRunes))
+	for i, r := range qRunes {
+		qLower[i] = r
+		if r >= 'A' && r <= 'Z' {
+			qLower[i] = r + ('a' - 'A')
+		}
+	}
+	idx := -1
+	for i := 0; i+len(qLower) <= len(lower); i++ {
+		match := true
+		for j := range qLower {
+			if lower[i+j] != qLower[j] {
+				match = false
+				break
+			}
+		}
+		if match {
+			idx = i
+			break
+		}
+	}
 	if idx < 0 {
-		if len(text) > 180 {
-			return text[:180]
+		if len(runes) > 180 {
+			return string(runes[:180])
 		}
 		return text
 	}
@@ -431,9 +403,9 @@ func extractSnippet(text, query string) string {
 	if start < 0 {
 		start = 0
 	}
-	end := idx + len(query) + 100
-	if end > len(text) {
-		end = len(text)
+	end := idx + len(qRunes) + 100
+	if end > len(runes) {
+		end = len(runes)
 	}
-	return text[start:end]
+	return string(runes[start:end])
 }

@@ -31,32 +31,16 @@ func New(ctx context.Context, dsn string) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	s := &Store{pool: pool, useDB: true}
-	if err := s.migrate(ctx); err != nil {
-		return nil, err
-	}
-	return s, nil
+	return NewWithPool(ctx, pool)
 }
+
+func NewWithPool(_ context.Context, pool *pgxpool.Pool) (*Store, error) {
+	return &Store{pool: pool, useDB: true}, nil
+}
+
+func (s *Store) Pool() *pgxpool.Pool { return s.pool }
 
 func NewInMemory() *Store { return &Store{records: []vector.Record{}} }
-
-func (s *Store) migrate(ctx context.Context) error {
-	if s.pool == nil {
-		return nil
-	}
-	ddl := `
-CREATE TABLE IF NOT EXISTS knowledge_vectors (
-  chunk_id TEXT PRIMARY KEY,
-  doc_id TEXT NOT NULL,
-  payload_json JSONB NOT NULL,
-  embedding_json JSONB NOT NULL,
-  text_content TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_knowledge_vectors_doc_id ON knowledge_vectors(doc_id);
-`
-	_, err := s.pool.Exec(ctx, ddl)
-	return err
-}
 
 func (s *Store) Upsert(ctx context.Context, rec vector.Record) error {
 	if s.useDB {

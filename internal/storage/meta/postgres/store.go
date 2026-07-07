@@ -27,50 +27,22 @@ func New(ctx context.Context, dsn string) (*Store, error) {
 	if err != nil {
 		return nil, fmt.Errorf("create pg pool: %w", err)
 	}
+	return NewWithPool(ctx, pool)
+}
+
+func NewWithPool(_ context.Context, pool *pgxpool.Pool) (*Store, error) {
 	s := &Store{
 		docs:  map[string]models.DocumentRecord{},
 		pool:  pool,
 		useDB: true,
 	}
-	if err := s.migrate(ctx); err != nil {
-		return nil, err
-	}
 	return s, nil
 }
 
+func (s *Store) Pool() *pgxpool.Pool { return s.pool }
+
 func NewInMemory() *Store {
 	return &Store{docs: map[string]models.DocumentRecord{}}
-}
-
-func (s *Store) migrate(ctx context.Context) error {
-	if s.pool == nil {
-		return nil
-	}
-	ddl := `
-CREATE TABLE IF NOT EXISTS knowledge_documents (
-  doc_id TEXT PRIMARY KEY,
-  owner_id TEXT NOT NULL,
-  visibility TEXT NOT NULL,
-  group_ids TEXT[] NOT NULL DEFAULT '{}',
-  title TEXT NOT NULL,
-  mime_type TEXT NOT NULL,
-  source TEXT NOT NULL,
-  source_url TEXT,
-  source_hash TEXT,
-  s3_key TEXT,
-  summary_chunk_id TEXT,
-  status TEXT NOT NULL,
-  body TEXT,
-  created_at TIMESTAMPTZ NOT NULL,
-  updated_at TIMESTAMPTZ NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_knowledge_docs_source ON knowledge_documents(source);
-CREATE INDEX IF NOT EXISTS idx_knowledge_docs_updated ON knowledge_documents(updated_at DESC);
-ALTER TABLE knowledge_documents ADD COLUMN IF NOT EXISTS storage_id TEXT NOT NULL DEFAULT 'legacy';
-CREATE INDEX IF NOT EXISTS idx_knowledge_docs_storage ON knowledge_documents(storage_id);
-`
-	_, err := s.pool.Exec(ctx, ddl)
-	return err
 }
 
 func (s *Store) Ping(ctx context.Context) error {

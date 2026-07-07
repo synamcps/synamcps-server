@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/synamcps/synamcps-server/internal/access"
 	"github.com/synamcps/synamcps-server/internal/auth"
 	"github.com/synamcps/synamcps-server/internal/config"
 	"github.com/synamcps/synamcps-server/internal/httpapi"
@@ -23,15 +24,19 @@ import (
 
 func TestCreateAndListKnowledge(t *testing.T) {
 	cfg := config.Config{
-		OAuth:         config.OAuthConfig{Providers: []config.ProviderConfig{{Name: "keycloak", Issuer: "https://issuer", JWKSURL: "insecure"}}},
+		Server:        config.ServerConfig{ListenAddr: ":8080", DevMode: true},
+		OAuth:         config.OAuthConfig{Providers: []config.ProviderConfig{{Name: "keycloak", Issuer: "https://issuer", Audience: "syna-mcp", JWKSURL: "insecure"}}},
 		Redis:         config.RedisConfig{TTLHours: 1, KeyPrefix: "test"},
 		Chunking:      config.ChunkingConfig{ChunkSize: 10, Overlap: 2},
-		S3:            config.S3Config{LargeDocBytes: 1000000},
+		S3:            config.S3Config{LargeDocBytes: 1000000, Bucket: "knowledge"},
 		Embedding:     config.ModelConfig{Model: "emb"},
 		Summarization: config.ModelConfig{Model: "sum", MaxOutputTokens: 10},
+		API:           config.APIConfig{AllowedOrigins: []string{"*"}},
 	}
 	sessions := session.NewStore(cfg.Redis)
 	gateway := auth.NewGateway(cfg)
+	accessStore := access.NewInMemoryStore()
+	accessSvc := access.NewService(accessStore)
 	catalog := metapg.NewInMemory()
 	vec := pgvector.NewInMemory()
 	blobStore, err := blob.NewStore(config.Config{})
@@ -39,7 +44,10 @@ func TestCreateAndListKnowledge(t *testing.T) {
 		t.Fatalf("blob store: %v", err)
 	}
 	p := ingest.NewPipeline(cfg, llm.NewSimpleSummarizer(cfg.Summarization), llm.NewSimpleEmbeddingProvider(cfg.Embedding), vec, catalog, blobStore)
-	svc := knowledge.NewService(catalog, vec, p)
+	svc, err := knowledge.NewService(catalog, vec, p, accessSvc, cfg.S3.Bucket)
+	if err != nil {
+		t.Fatalf("knowledge service: %v", err)
+	}
 	api := httpapi.NewRouter(gateway, sessions, svc, true)
 
 	token := mustDevJWT(t, map[string]any{

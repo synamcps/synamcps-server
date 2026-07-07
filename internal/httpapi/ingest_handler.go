@@ -119,7 +119,7 @@ func (h *IngestHandler) IngestFile(w http.ResponseWriter, r *http.Request) {
 		title = filename
 	}
 
-	doc, err := h.service.IngestBinary(r.Context(), p, knowledge.BinaryInput{
+	doc, err := h.service.IngestBinary(r.Context(), p, accessContextFromRequest(r), knowledge.BinaryInput{
 		StorageID:  storageID,
 		Title:      title,
 		Filename:   filename,
@@ -218,7 +218,7 @@ func (h *IngestHandler) IngestLink(w http.ResponseWriter, r *http.Request) {
 	if source == "" {
 		source = "link"
 	}
-	doc, err := h.service.IngestBinary(r.Context(), p, knowledge.BinaryInput{
+	doc, err := h.service.IngestBinary(r.Context(), p, accessContextFromRequest(r), knowledge.BinaryInput{
 		StorageID:  strings.TrimSpace(req.StorageID),
 		Title:      title,
 		Filename:   filename,

@@ -20,8 +20,20 @@ type Service struct {
 	mcpStore MCPScopeLoader
 }
 
-func NewService(store *Store) *Service {
-	return &Service{store: store}
+type ServiceOption func(*Service)
+
+func WithMCPScopeLoader(loader MCPScopeLoader) ServiceOption {
+	return func(s *Service) {
+		s.mcpStore = loader
+	}
+}
+
+func NewService(store *Store, opts ...ServiceOption) *Service {
+	s := &Service{store: store}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
 }
 
 func (s *Service) AttachMCPStore(loader MCPScopeLoader) {

@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/synamcps/synamcps-server/internal/domainerr"
 	"github.com/synamcps/synamcps-server/internal/knowledge"
 	"github.com/synamcps/synamcps-server/internal/models"
 )
@@ -27,7 +28,8 @@ func (h *KnowledgeHandler) List(w http.ResponseWriter, r *http.Request) {
 	}
 
 	page := parsePageRequest(r)
-	out, err := h.service.List(r.Context(), p, page)
+	ac := accessContextFromRequest(r)
+	out, err := h.service.List(r.Context(), p, ac, page)
 	if err != nil {
 		http.Error(w, err.Error(), statusFromErr(err))
 		return
@@ -49,7 +51,8 @@ func (h *KnowledgeHandler) Create(channel string) http.HandlerFunc {
 			return
 		}
 
-		doc, err := h.service.Save(r.Context(), p, knowledge.SaveInput{
+		ac := accessContextFromRequest(r)
+		doc, err := h.service.Save(r.Context(), p, ac, knowledge.SaveInput{
 			StorageID:  req.StorageID,
 			Title:      req.Title,
 			Text:       req.Text,
@@ -75,7 +78,8 @@ func (h *KnowledgeHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	docID := strings.TrimPrefix(r.URL.Path, "/api/knowledge/")
-	doc, err := h.service.Get(r.Context(), p, docID)
+	ac := accessContextFromRequest(r)
+	doc, err := h.service.Get(r.Context(), p, ac, docID)
 	if err != nil {
 		http.Error(w, err.Error(), statusFromErr(err))
 		return
@@ -90,7 +94,8 @@ func (h *KnowledgeHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	docID := strings.TrimPrefix(r.URL.Path, "/api/knowledge/")
-	if err := h.service.Delete(r.Context(), p, docID); err != nil {
+	ac := accessContextFromRequest(r)
+	if err := h.service.Delete(r.Context(), p, ac, docID); err != nil {
 		http.Error(w, err.Error(), statusFromErr(err))
 		return
 	}
@@ -109,7 +114,8 @@ func (h *KnowledgeHandler) Search(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	hits, err := h.service.Search(r.Context(), p, models.SearchRequest{
+	ac := accessContextFromRequest(r)
+	hits, err := h.service.Search(r.Context(), p, ac, models.SearchRequest{
 		Query:   req.Query,
 		TopK:    req.TopK,
 		Filters: req.Filters,
@@ -146,16 +152,8 @@ func writeJSON(w http.ResponseWriter, v any, status int) {
 }
 
 func statusFromErr(err error) int {
-	switch {
-	case err == nil:
+	if err == nil {
 		return http.StatusOK
-	case strings.Contains(err.Error(), "forbidden"):
-		return http.StatusForbidden
-	case strings.Contains(err.Error(), "not found"):
-		return http.StatusNotFound
-	case strings.Contains(err.Error(), "invalid"):
-		return http.StatusUnprocessableEntity
-	default:
-		return http.StatusBadRequest
 	}
+	return domainerr.HTTPStatus(err)
 }

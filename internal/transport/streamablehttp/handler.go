@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/synamcps/synamcps-server/internal/auth"
+	"github.com/synamcps/synamcps-server/internal/domainerr"
 	"github.com/synamcps/synamcps-server/internal/mcp"
 	"github.com/synamcps/synamcps-server/internal/models"
 	"github.com/synamcps/synamcps-server/internal/session"
@@ -44,7 +45,7 @@ func (h *Handler) post(w http.ResponseWriter, r *http.Request) {
 			"jsonrpc": "2.0",
 			"id":      body["id"],
 			"error": map[string]any{
-				"code":    -32000,
+				"code":    domainerr.JSONRPCCode(err),
 				"message": err.Error(),
 			},
 		})
