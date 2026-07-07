@@ -24,11 +24,18 @@ type OpaqueTokenResolver interface {
 
 type Gateway struct {
 	router        *ProviderRouter
-	cfg           config.Config
+	cfg           GatewayConfig
 	tokenResolver OpaqueTokenResolver
 }
 
-func NewGateway(cfg config.Config) *Gateway {
+type GatewayConfig struct {
+	OAuth     config.OAuthConfig
+	Teleport  config.TeleportConfig
+	APIScopes []string
+	DevMode   bool
+}
+
+func NewGateway(cfg GatewayConfig) *Gateway {
 	return &Gateway{router: NewProviderRouter(cfg), cfg: cfg}
 }
 
@@ -107,7 +114,7 @@ func (g *Gateway) ProtectedResourceMetadataHandler() http.HandlerFunc {
 		metadata := map[string]any{
 			"resource":                 "syna-mcp",
 			"authorization_servers":    collectIssuers(g.cfg),
-			"scopes_supported":         g.cfg.API.Scopes,
+			"scopes_supported":         g.cfg.APIScopes,
 			"bearer_methods_supported": []string{"header"},
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -142,7 +149,7 @@ func (g *Gateway) AuthorizationServerMetadataHandler() http.HandlerFunc {
 	}
 }
 
-func collectIssuers(cfg config.Config) []string {
+func collectIssuers(cfg GatewayConfig) []string {
 	out := make([]string, 0, len(cfg.OAuth.Providers)+1)
 	for _, p := range cfg.OAuth.Providers {
 		out = append(out, p.Issuer)
@@ -153,7 +160,7 @@ func collectIssuers(cfg config.Config) []string {
 	return out
 }
 
-func preferredProvider(cfg config.Config) (config.ProviderConfig, bool) {
+func preferredProvider(cfg GatewayConfig) (config.ProviderConfig, bool) {
 	for _, p := range cfg.OAuth.Providers {
 		if strings.EqualFold(p.Name, "keycloak") {
 			return p, true

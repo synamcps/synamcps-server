@@ -28,7 +28,10 @@ func testPipeline(t *testing.T) (*Pipeline, *Worker, *metapg.Store, *pgvector.St
 		t.Fatalf("blob store: %v", err)
 	}
 	jobs := NewInMemoryJobStore()
-	p := NewPipeline(cfg, llm.NewSimpleSummarizer(cfg.Summarization), llm.NewSimpleEmbeddingProvider(cfg.Embedding), vec, catalog, blobStore, jobs)
+	p := NewPipeline(PipelineConfig{
+		Chunking:      cfg.Chunking,
+		LargeDocBytes: cfg.S3.LargeDocBytes,
+	}, llm.NewSimpleSummarizer(cfg.Summarization), llm.NewSimpleEmbeddingProvider(cfg.Embedding), vec, catalog, blobStore, jobs)
 	w := NewWorker(p, jobs, WorkerConfig{})
 	return p, w, catalog, vec
 }
@@ -145,7 +148,10 @@ func TestIngestFailureMarksDocumentFailed(t *testing.T) {
 		t.Fatalf("blob store: %v", err)
 	}
 	jobs := NewInMemoryJobStore()
-	p := NewPipeline(cfg, &failSummarizer{}, llm.NewSimpleEmbeddingProvider(cfg.Embedding), vec, catalog, blobStore, jobs)
+	p := NewPipeline(PipelineConfig{
+		Chunking:      cfg.Chunking,
+		LargeDocBytes: cfg.S3.LargeDocBytes,
+	}, &failSummarizer{}, llm.NewSimpleEmbeddingProvider(cfg.Embedding), vec, catalog, blobStore, jobs)
 	w := NewWorker(p, jobs, WorkerConfig{MaxAttempts: 1})
 
 	doc, err := p.Save(ctx, SaveRequest{

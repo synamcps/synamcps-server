@@ -18,7 +18,7 @@ import (
 )
 
 type Pipeline struct {
-	cfg         config.Config
+	cfg         PipelineConfig
 	summarizer  llm.Summarizer
 	embedder    llm.EmbeddingProvider
 	vectorStore vector.Store
@@ -28,8 +28,13 @@ type Pipeline struct {
 	maxAttempts int
 }
 
+type PipelineConfig struct {
+	Chunking      config.ChunkingConfig
+	LargeDocBytes int64
+}
+
 func NewPipeline(
-	cfg config.Config,
+	cfg PipelineConfig,
 	summarizer llm.Summarizer,
 	embedder llm.EmbeddingProvider,
 	vectorStore vector.Store,
@@ -123,7 +128,7 @@ func (p *Pipeline) prepareDocument(ctx context.Context, req SaveRequest) (models
 		doc.S3Key = req.RawS3Key
 	}
 
-	if int64(len(req.Body)) > p.cfg.S3.LargeDocBytes && p.cfg.S3.LargeDocBytes > 0 {
+	if int64(len(req.Body)) > p.cfg.LargeDocBytes && p.cfg.LargeDocBytes > 0 {
 		prefix := req.S3Prefix
 		if prefix == "" {
 			prefix = "storages/" + doc.StorageID + "/"

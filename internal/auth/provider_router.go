@@ -14,12 +14,12 @@ import (
 )
 
 type ProviderRouter struct {
-	cfg      config.Config
+	cfg      GatewayConfig
 	verifier map[string]jwt.Keyfunc
 	mu       sync.RWMutex
 }
 
-func NewProviderRouter(cfg config.Config) *ProviderRouter {
+func NewProviderRouter(cfg GatewayConfig) *ProviderRouter {
 	return &ProviderRouter{
 		cfg:      cfg,
 		verifier: map[string]jwt.Keyfunc{},
@@ -37,7 +37,7 @@ func (r *ProviderRouter) VerifyAndParseClaims(ctx context.Context, rawToken stri
 		return tokenClaims{}, errors.New("missing issuer")
 	}
 	if p, err := r.providerByIssuer(unverified.Issuer); err == nil && p.JWKSURL == "insecure" {
-		if !r.cfg.Server.DevMode {
+		if !r.cfg.DevMode {
 			return tokenClaims{}, errors.New("insecure jwks requires server.dev_mode")
 		}
 		if len(unverified.Scopes) == 0 && unverified.Scope != "" {

@@ -11,26 +11,37 @@ import (
 	"github.com/synamcps/synamcps-server/internal/usage"
 )
 
-func NewRouter(gateway *auth.Gateway, sessions *session.Store, service *knowledge.Service, allowPartial bool) http.Handler {
-	return NewRouterWithAdmin(gateway, sessions, service, nil, nil, "", allowPartial, nil, nil, nil, nil, 0)
+type RouterDeps struct {
+	Gateway               *auth.Gateway
+	Sessions              *session.Store
+	Knowledge             *knowledge.Service
+	Access                *access.Service
+	Usage                 *usage.Service
+	S3Bucket              string
+	AllowPartialSourceURL bool
+	Status                *StatusHandler
+	MCPStore              *mcpproxy.Store
+	MCPManager            *mcpproxy.Manager
+	MCPAccess             *mcpproxy.AccessService
+	MaxBodyBytes          int64
 }
 
-func NewRouterWithAdmin(gateway *auth.Gateway, sessions *session.Store, service *knowledge.Service, accessService *access.Service, usageService *usage.Service, s3Bucket string, allowPartial bool, statusHandler *StatusHandler, mcpStore *mcpproxy.Store, mcpManager *mcpproxy.Manager, mcpAccess *mcpproxy.AccessService, maxBodyBytes int64) http.Handler {
+func NewRouter(deps RouterDeps) http.Handler {
 	mux := http.NewServeMux()
-	authResolver := NewAuthResolver(gateway, sessions)
-	handler := NewKnowledgeHandler(service, allowPartial)
+	authResolver := NewAuthResolver(deps.Gateway, deps.Sessions)
+	handler := NewKnowledgeHandler(deps.Knowledge, deps.AllowPartialSourceURL)
 
-	if accessService != nil {
-		admin := NewAdminHandler(accessService, usageService, s3Bucket)
-		admin.AttachMCP(mcpStore, mcpManager, mcpAccess)
+	if deps.Access != nil {
+		admin := NewAdminHandler(deps.Access, deps.Usage, deps.S3Bucket)
+		admin.AttachMCP(deps.MCPStore, deps.MCPManager, deps.MCPAccess)
 		mux.Handle("/api/admin/", authResolver.Middleware(admin))
-		if statusHandler != nil {
-			mux.Handle("GET /api/admin/status", authResolver.Middleware(statusHandler))
+		if deps.Status != nil {
+			mux.Handle("GET /api/admin/status", authResolver.Middleware(deps.Status))
 		}
 	}
-	ingestHandler := NewIngestHandler(service)
+	ingestHandler := NewIngestHandler(deps.Knowledge)
 	guard := func(h http.HandlerFunc) http.Handler {
-		return maxBodyMiddleware(maxBodyBytes, authResolver.Middleware(rateLimitMiddleware(usageService, h)))
+		return maxBodyMiddleware(deps.MaxBodyBytes, authResolver.Middleware(rateLimitMiddleware(deps.Usage, h)))
 	}
 	mux.Handle("GET /api/knowledge", guard(handler.List))
 	mux.Handle("POST /api/knowledge", guard(handler.Create("api")))

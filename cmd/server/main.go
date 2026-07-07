@@ -56,7 +56,12 @@ func main() {
 	defer cancel()
 
 	sessions := session.NewStore(cfg.Redis)
-	gateway := auth.NewGateway(cfg)
+	gateway := auth.NewGateway(auth.GatewayConfig{
+		OAuth:     cfg.OAuth,
+		Teleport:  cfg.Teleport,
+		APIScopes: cfg.API.Scopes,
+		DevMode:   cfg.Server.DevMode,
+	})
 
 	var pgPool *pgxpool.Pool
 	if cfg.Metadata.DSN != "" {
@@ -125,7 +130,10 @@ func main() {
 	summarizer := llm.NewSimpleSummarizer(cfg.Summarization)
 	embedder := llm.NewSimpleEmbeddingProvider(cfg.Embedding)
 	jobStore := ingest.NewJobStore(ctx, pgPool)
-	pipeline := ingest.NewPipeline(cfg, summarizer, embedder, vec, catalog, blobStore, jobStore)
+	pipeline := ingest.NewPipeline(ingest.PipelineConfig{
+		Chunking:      cfg.Chunking,
+		LargeDocBytes: cfg.S3.LargeDocBytes,
+	}, summarizer, embedder, vec, catalog, blobStore, jobStore)
 	ingestWorker := ingest.NewWorker(pipeline, jobStore, ingest.WorkerConfig{})
 	ingestWorker.Start(ctx)
 	knowledgeService, err := knowledge.NewService(catalog, vec, pipeline, accessService, cfg.S3.Bucket, ingestWorker)
@@ -148,7 +156,20 @@ func main() {
 		"blob":     blobStore,
 	}))
 	statusHandler := httpapi.NewStatusHandler(cfg, usageService, catalog, sessions, blobStore)
-	apiRouter := httpapi.NewRouterWithAdmin(gateway, sessions, knowledgeService, accessService, usageService, cfg.S3.Bucket, cfg.Search.Filters.SourceURL.AllowPartialMatch, statusHandler, mcpStore, mcpManager, mcpAccess, cfg.Limits.MaxUploadBytes)
+	apiRouter := httpapi.NewRouter(httpapi.RouterDeps{
+		Gateway:               gateway,
+		Sessions:              sessions,
+		Knowledge:             knowledgeService,
+		Access:                accessService,
+		Usage:                 usageService,
+		S3Bucket:              cfg.S3.Bucket,
+		AllowPartialSourceURL: cfg.Search.Filters.SourceURL.AllowPartialMatch,
+		Status:                statusHandler,
+		MCPStore:              mcpStore,
+		MCPManager:            mcpManager,
+		MCPAccess:             mcpAccess,
+		MaxBodyBytes:          cfg.Limits.MaxUploadBytes,
+	})
 	rootMux.Handle("/api/", apiRouter)
 	rootMux.HandleFunc("/api/capabilities", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

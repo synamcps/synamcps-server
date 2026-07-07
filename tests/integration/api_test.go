@@ -35,7 +35,12 @@ func TestCreateAndListKnowledge(t *testing.T) {
 		API:           config.APIConfig{AllowedOrigins: []string{"*"}},
 	}
 	sessions := session.NewStore(cfg.Redis)
-	gateway := auth.NewGateway(cfg)
+	gateway := auth.NewGateway(auth.GatewayConfig{
+		OAuth:     cfg.OAuth,
+		Teleport:  cfg.Teleport,
+		APIScopes: cfg.API.Scopes,
+		DevMode:   cfg.Server.DevMode,
+	})
 	accessStore := access.NewInMemoryStore()
 	accessSvc := access.NewService(accessStore)
 	catalog := metapg.NewInMemory()
@@ -45,13 +50,21 @@ func TestCreateAndListKnowledge(t *testing.T) {
 		t.Fatalf("blob store: %v", err)
 	}
 	jobs := ingest.NewInMemoryJobStore()
-	p := ingest.NewPipeline(cfg, llm.NewSimpleSummarizer(cfg.Summarization), llm.NewSimpleEmbeddingProvider(cfg.Embedding), vec, catalog, blobStore, jobs)
+	p := ingest.NewPipeline(ingest.PipelineConfig{
+		Chunking:      cfg.Chunking,
+		LargeDocBytes: cfg.S3.LargeDocBytes,
+	}, llm.NewSimpleSummarizer(cfg.Summarization), llm.NewSimpleEmbeddingProvider(cfg.Embedding), vec, catalog, blobStore, jobs)
 	worker := ingest.NewWorker(p, jobs, ingest.WorkerConfig{})
 	svc, err := knowledge.NewService(catalog, vec, p, accessSvc, cfg.S3.Bucket, worker)
 	if err != nil {
 		t.Fatalf("knowledge service: %v", err)
 	}
-	api := httpapi.NewRouter(gateway, sessions, svc, true)
+	api := httpapi.NewRouter(httpapi.RouterDeps{
+		Gateway:               gateway,
+		Sessions:              sessions,
+		Knowledge:             svc,
+		AllowPartialSourceURL: true,
+	})
 
 	token := mustDevJWT(t, map[string]any{
 		"sub":    "u1",
