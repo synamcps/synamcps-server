@@ -42,6 +42,40 @@ If `transport.legacy_sse=true`:
 - connect to `GET /sse`
 - post messages to `/messages`
 
+## Administrative MCP Tools
+
+JWT/Web principals can administer SynaMCPs directly from MCP clients. Access-token
+authentication intentionally hides and forbids administrative tools: access
+tokens narrow access and must not manage token policy or ACLs.
+
+Tool visibility:
+
+- `platform_admin`: all `admin_*` tools.
+- storage owners/admins: token, ACL, and storage archive tools for their storage.
+- regular JWT users: own-token lifecycle tools only.
+
+Token lifecycle from an MCP client:
+
+1. `admin_token_create` with `name`, `mode`, and `storageIds`.
+2. Save `rawToken` immediately. It is returned only once.
+3. `admin_token_update_scopes` to narrow storage scopes or add MCP proxy scopes.
+4. `admin_token_revoke` to revoke the token.
+
+Administrative mutation tools write audit events with an `mcp.` action prefix.
+
+Common tools:
+
+- tokens: `admin_token_create`, `admin_token_list`, `admin_token_get`,
+  `admin_token_revoke`, `admin_token_update_scopes`,
+  `admin_token_update_rate_limit`
+- users/groups: `admin_user_list`, `admin_user_get`, `admin_user_disable`,
+  `admin_group_list`, `admin_group_members`, `admin_group_add_member`,
+  `admin_group_remove_member`
+- ACL/storage: `admin_acl_list`, `admin_acl_grant`, `admin_acl_revoke`,
+  `admin_storage_create`, `admin_storage_archive`
+- MCP proxy: `admin_mcp_server_list`, `admin_mcp_server_test`,
+  `admin_mcp_scope_set`
+
 ## Troubleshooting
 
 - `401`: missing/invalid token (including on `GET`/`DELETE /mcp`)

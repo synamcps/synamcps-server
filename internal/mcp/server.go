@@ -278,6 +278,16 @@ func (s *Server) dispatch(ctx context.Context, p models.Principal, accessCtx mod
 			return nil, err
 		}
 		return hits, nil
+	case "admin_token_create", "admin_token_list", "admin_token_get", "admin_token_revoke", "admin_token_update_scopes", "admin_token_update_rate_limit",
+		"admin_user_list", "admin_user_get", "admin_user_disable", "admin_group_list", "admin_group_members", "admin_group_add_member", "admin_group_remove_member",
+		"admin_acl_list", "admin_acl_grant", "admin_acl_revoke", "admin_storage_create", "admin_storage_archive",
+		"admin_mcp_server_list", "admin_mcp_server_test", "admin_mcp_scope_set":
+		result, err := s.handleAdminTool(ctx, p, accessCtx, method, params)
+		if err != nil {
+			*status = statusFromError(err)
+			return nil, err
+		}
+		return result, nil
 	default:
 		*status = "error"
 		return nil, domainerr.ErrUnknownMethod
@@ -352,6 +362,11 @@ func (s *Server) handleToolsList(ctx context.Context, p models.Principal, access
 		return nil, err
 	}
 	tools = append(tools, exposed.Tools...)
+	adminTools, err := s.buildAdminTools(ctx, p, accessCtx)
+	if err != nil {
+		return nil, err
+	}
+	tools = append(tools, adminTools...)
 	result := map[string]any{"tools": tools}
 	if len(storages) > 0 {
 		result["storages"] = storages

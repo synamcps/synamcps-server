@@ -80,7 +80,7 @@ func (s *Store) UpsertUserFromPrincipal(ctx context.Context, p models.Principal)
 		DisplayName:     p.Email,
 		Status:          "active",
 		CreatedAt:       now,
-		LastSeenAt:       now,
+		LastSeenAt:      now,
 	}
 	if s.useDB {
 		_, err := s.pool.Exec(ctx, `
@@ -717,15 +717,44 @@ func (s *Store) DeleteStorage(ctx context.Context, storageID string) error {
 	return nil
 }
 
+func (s *Store) ArchiveStorage(ctx context.Context, storageID string) (models.Storage, error) {
+	now := time.Now().UTC()
+	if s.useDB {
+		_, err := s.pool.Exec(ctx, `UPDATE storages SET status=$2, archived_at=$3, updated_at=$3 WHERE id=$1`, storageID, string(models.StorageStatusArchived), now)
+		if err != nil {
+			return models.Storage{}, err
+		}
+		st, ok, err := s.GetStorage(ctx, storageID)
+		if err != nil {
+			return models.Storage{}, err
+		}
+		if !ok {
+			return models.Storage{}, errors.New("storage not found")
+		}
+		return st, nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	st, ok := s.storages[storageID]
+	if !ok {
+		return models.Storage{}, errors.New("storage not found")
+	}
+	st.Status = models.StorageStatusArchived
+	st.ArchivedAt = &now
+	st.UpdatedAt = now
+	s.storages[storageID] = st
+	return st, nil
+}
+
 type TokenStorageAccess struct {
-	TokenID        string            `json:"tokenId"`
-	TokenName      string            `json:"tokenName"`
-	OwnerSubjectKey string           `json:"ownerSubjectKey"`
-	TokenMode      models.AccessMode `json:"tokenMode"`
-	StorageID      string            `json:"storageId"`
-	MaxMode        models.AccessMode `json:"maxMode"`
-	ToolAllowlist  []string          `json:"toolAllowlist"`
-	CreatedAt      time.Time         `json:"createdAt"`
+	TokenID         string            `json:"tokenId"`
+	TokenName       string            `json:"tokenName"`
+	OwnerSubjectKey string            `json:"ownerSubjectKey"`
+	TokenMode       models.AccessMode `json:"tokenMode"`
+	StorageID       string            `json:"storageId"`
+	MaxMode         models.AccessMode `json:"maxMode"`
+	ToolAllowlist   []string          `json:"toolAllowlist"`
+	CreatedAt       time.Time         `json:"createdAt"`
 }
 
 func (s *Store) TokenAccessByStorage(ctx context.Context, storageID string) ([]TokenStorageAccess, error) {
@@ -804,6 +833,21 @@ ON CONFLICT (storage_id, subject_key, role) DO UPDATE SET granted_by=EXCLUDED.gr
 	defer s.mu.Unlock()
 	s.acl[b.ID] = b
 	return b, nil
+}
+
+func (s *Store) DeleteACL(ctx context.Context, storageID, subjectKey string, role models.StorageRole) error {
+	if s.useDB {
+		_, err := s.pool.Exec(ctx, `DELETE FROM storage_acl_bindings WHERE storage_id=$1 AND subject_key=$2 AND role=$3`, storageID, subjectKey, string(role))
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for id, b := range s.acl {
+		if b.StorageID == storageID && b.SubjectKey == subjectKey && b.Role == role {
+			delete(s.acl, id)
+		}
+	}
+	return nil
 }
 
 func (s *Store) ACLForStorage(ctx context.Context, storageID string) ([]models.ACLBinding, error) {
@@ -1041,6 +1085,51 @@ func (s *Store) TokenStorages(ctx context.Context, tokenID string) ([]models.Acc
 	return out, nil
 }
 
+func (s *Store) ReplaceTokenStorages(ctx context.Context, tokenID string, scopes []models.AccessTokenStorage) error {
+	now := time.Now().UTC()
+	if s.useDB {
+		tx, err := s.pool.Begin(ctx)
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback(ctx)
+		if _, err := tx.Exec(ctx, `DELETE FROM access_token_storages WHERE token_id=$1`, tokenID); err != nil {
+			return err
+		}
+		for _, scope := range scopes {
+			scope.TokenID = tokenID
+			if scope.CreatedAt.IsZero() {
+				scope.CreatedAt = now
+			}
+			if scope.ToolAllowlist == nil {
+				scope.ToolAllowlist = []string{}
+			}
+			if _, err := tx.Exec(ctx, `INSERT INTO access_token_storages (token_id, storage_id, max_mode, tool_allowlist, created_at) VALUES ($1,$2,$3,$4,$5)`,
+				scope.TokenID, scope.StorageID, string(scope.MaxMode), scope.ToolAllowlist, scope.CreatedAt); err != nil {
+				return err
+			}
+		}
+		return tx.Commit(ctx)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	filtered := s.tokenScopes[:0]
+	for _, scope := range s.tokenScopes {
+		if scope.TokenID != tokenID {
+			filtered = append(filtered, scope)
+		}
+	}
+	for _, scope := range scopes {
+		scope.TokenID = tokenID
+		if scope.CreatedAt.IsZero() {
+			scope.CreatedAt = now
+		}
+		filtered = append(filtered, scope)
+	}
+	s.tokenScopes = filtered
+	return nil
+}
+
 func (s *Store) RevokeToken(ctx context.Context, tokenID string) error {
 	now := time.Now().UTC()
 	if s.useDB {
@@ -1111,6 +1200,48 @@ func (s *Store) MarkTokenUsed(ctx context.Context, tokenID string) error {
 	t.LastUsedAt = &now
 	s.tokens[tokenID] = t
 	return nil
+}
+
+func (s *Store) RecordAudit(ctx context.Context, event models.AuditEvent) error {
+	if event.ID == "" {
+		event.ID = uuid.NewString()
+	}
+	if event.CreatedAt.IsZero() {
+		event.CreatedAt = time.Now().UTC()
+	}
+	if s.useDB {
+		_, err := s.pool.Exec(ctx, `INSERT INTO audit_events (id, actor_subject_key, action, resource_type, resource_id, storage_id, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+			event.ID, event.ActorSubjectKey, event.Action, event.ResourceType, event.ResourceID, event.StorageID, event.CreatedAt)
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.audit = append(s.audit, event)
+	return nil
+}
+
+func (s *Store) ListAudit(ctx context.Context) ([]models.AuditEvent, error) {
+	if s.useDB {
+		rows, err := s.pool.Query(ctx, `SELECT id, actor_subject_key, action, resource_type, resource_id, COALESCE(storage_id,''), created_at FROM audit_events ORDER BY created_at DESC`)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		var out []models.AuditEvent
+		for rows.Next() {
+			var event models.AuditEvent
+			if err := rows.Scan(&event.ID, &event.ActorSubjectKey, &event.Action, &event.ResourceType, &event.ResourceID, &event.StorageID, &event.CreatedAt); err != nil {
+				return nil, err
+			}
+			out = append(out, event)
+		}
+		return out, rows.Err()
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := append([]models.AuditEvent(nil), s.audit...)
+	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.After(out[j].CreatedAt) })
+	return out, nil
 }
 
 func HashToken(raw string) string {
