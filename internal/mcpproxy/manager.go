@@ -9,14 +9,15 @@ import (
 
 	"github.com/synamcps/synamcps-server/internal/config"
 	"github.com/synamcps/synamcps-server/internal/domainerr"
+	"github.com/synamcps/synamcps-server/internal/mcpdesc"
 	"github.com/synamcps/synamcps-server/internal/models"
 )
 
 type Manager struct {
-	store   *Store
-	cfg     config.MCPProxyConfig
+	store    *Store
+	cfg      config.MCPProxyConfig
 	sessions map[string]*upstreamClient
-	mu      sync.Mutex
+	mu       sync.Mutex
 }
 
 func NewManager(cfg config.MCPProxyConfig, store *Store) *Manager {
@@ -119,7 +120,7 @@ func (m *Manager) ExposedForAccess(ctx context.Context, servers []AccessibleServ
 			if !allow(item.Scope.ToolAllowlist, name) {
 				continue
 			}
-			out.Tools = append(out.Tools, toolDescriptor(name, t))
+			out.Tools = append(out.Tools, proxyToolDescriptor(name, t))
 		}
 		for _, r := range caps.Resources {
 			if !r.Enabled {
@@ -162,16 +163,12 @@ func allow(allowlist []string, name string) bool {
 	return false
 }
 
-func toolDescriptor(name string, t models.MCPServerTool) map[string]any {
+func proxyToolDescriptor(name string, t models.MCPServerTool) map[string]any {
 	schema := map[string]any{"type": "object", "properties": map[string]any{}}
 	if t.InputSchemaJSON != "" {
 		_ = json.Unmarshal([]byte(t.InputSchemaJSON), &schema)
 	}
-	return map[string]any{
-		"name":        name,
-		"description": t.Description,
-		"inputSchema": schema,
-	}
+	return mcpdesc.Tool(name, t.Description, schema)
 }
 
 func resourceDescriptor(uri string, r models.MCPServerResource) map[string]any {

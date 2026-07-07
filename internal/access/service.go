@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/synamcps/synamcps-server/internal/models"
+	"github.com/synamcps/synamcps-server/internal/strutil"
 )
 
 type MCPScopeLoader interface {
@@ -135,7 +136,7 @@ func evaluateStorageAccess(p models.Principal, token *models.AccessToken, tokenS
 			}
 		}
 	} else {
-		if len(userPerms) == 0 && hasScope(p.Scopes, "platform_admin") {
+		if len(userPerms) == 0 && strutil.Contains(p.Scopes, "platform_admin") {
 			userPerms[permission] = struct{}{}
 		}
 	}
@@ -210,7 +211,7 @@ func (s *Service) ReadableStorageIDs(ctx context.Context, p models.Principal, to
 func (s *Service) storageCandidates(ctx context.Context, p models.Principal, token *models.AccessToken, tokenScopes []models.AccessTokenStorage) ([]models.Storage, []models.ACLBinding, error) {
 	filter := AccessibleStorageFilter{
 		SubjectKeys:   SubjectKeys(p),
-		PlatformAdmin: token == nil && hasScope(p.Scopes, "platform_admin"),
+		PlatformAdmin: token == nil && strutil.Contains(p.Scopes, "platform_admin"),
 		HasToken:      token != nil,
 	}
 	if token != nil {
@@ -238,15 +239,6 @@ func intersectMode(a, b models.AccessMode) models.AccessMode {
 		return models.AccessModeRead
 	}
 	return models.AccessModeReadWrite
-}
-
-func hasScope(scopes []string, scope string) bool {
-	for _, s := range scopes {
-		if s == scope {
-			return true
-		}
-	}
-	return false
 }
 
 func subjectIDForService(subject string) string {

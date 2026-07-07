@@ -1,6 +1,9 @@
 package policy
 
-import "github.com/synamcps/synamcps-server/internal/models"
+import (
+	"github.com/synamcps/synamcps-server/internal/models"
+	"github.com/synamcps/synamcps-server/internal/strutil"
+)
 
 func CanRead(p models.Principal, d models.DocumentRecord) bool {
 	switch d.Visibility {
@@ -9,7 +12,7 @@ func CanRead(p models.Principal, d models.DocumentRecord) bool {
 	case models.VisibilityPersonal:
 		return d.OwnerID == p.UserID
 	case models.VisibilityGroup:
-		return intersects(d.GroupIDs, p.Groups) || d.OwnerID == p.UserID
+		return strutil.Intersects(d.GroupIDs, p.Groups) || d.OwnerID == p.UserID
 	default:
 		return false
 	}
@@ -18,11 +21,11 @@ func CanRead(p models.Principal, d models.DocumentRecord) bool {
 func CanWrite(p models.Principal, visibility models.Visibility, groupIDs []string) bool {
 	switch visibility {
 	case models.VisibilityPublic:
-		return hasScope(p.Scopes, "knowledge.write.public")
+		return strutil.Contains(p.Scopes, "knowledge.write.public")
 	case models.VisibilityPersonal:
 		return true
 	case models.VisibilityGroup:
-		return intersects(groupIDs, p.Groups)
+		return strutil.Intersects(groupIDs, p.Groups)
 	default:
 		return false
 	}
@@ -33,32 +36,10 @@ func CanDelete(p models.Principal, d models.DocumentRecord) bool {
 		return true
 	}
 	if d.Visibility == models.VisibilityPublic {
-		return hasScope(p.Scopes, "knowledge.delete.public")
+		return strutil.Contains(p.Scopes, "knowledge.delete.public")
 	}
 	if d.Visibility == models.VisibilityGroup {
-		return hasScope(p.Scopes, "knowledge.delete.group")
-	}
-	return false
-}
-
-func intersects(a, b []string) bool {
-	set := map[string]struct{}{}
-	for _, v := range a {
-		set[v] = struct{}{}
-	}
-	for _, v := range b {
-		if _, ok := set[v]; ok {
-			return true
-		}
-	}
-	return false
-}
-
-func hasScope(scopes []string, scope string) bool {
-	for _, s := range scopes {
-		if s == scope {
-			return true
-		}
+		return strutil.Contains(p.Scopes, "knowledge.delete.group")
 	}
 	return false
 }

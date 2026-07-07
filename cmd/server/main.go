@@ -322,6 +322,8 @@ func isAllowedOrigin(origin, host string, allowlist []string) bool {
 	}
 	originURL, err := url.Parse(origin)
 	if err == nil {
+		// Localhost UI and MCP clients often run on ephemeral ports during
+		// development; allow loopback origins even when they are not listed.
 		if sameHost(originURL.Host, host) || isLoopbackHost(originURL.Hostname()) {
 			return true
 		}

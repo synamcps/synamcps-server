@@ -3,6 +3,7 @@ package knowledge
 import (
 	"context"
 	"errors"
+	"strings"
 
 	"github.com/synamcps/synamcps-server/internal/access"
 	"github.com/synamcps/synamcps-server/internal/domainerr"
@@ -10,6 +11,7 @@ import (
 	"github.com/synamcps/synamcps-server/internal/models"
 	"github.com/synamcps/synamcps-server/internal/storage/meta"
 	"github.com/synamcps/synamcps-server/internal/storage/vector"
+	"github.com/synamcps/synamcps-server/internal/strutil"
 )
 
 type Service struct {
@@ -326,7 +328,7 @@ func (s *Service) Search(ctx context.Context, p models.Principal, ac models.APIA
 			DocID:      doc.DocID,
 			Title:      doc.Title,
 			Snippet:    snippet,
-			Score:      1.0,
+			Score:      r.Score,
 			Visibility: doc.Visibility,
 			Source:     doc.Source,
 			SourceURL:  doc.SourceURL,
@@ -363,7 +365,7 @@ func canSeeVisibility(p models.Principal, d models.DocumentRecord) bool {
 	case models.VisibilityPersonal:
 		return ownsDocumentKnowledge(p, d)
 	case models.VisibilityGroup:
-		return ownsDocumentKnowledge(p, d) || intersectsStrings(d.GroupIDs, p.Groups)
+		return ownsDocumentKnowledge(p, d) || strutil.Intersects(d.GroupIDs, p.Groups)
 	default:
 		return true
 	}
@@ -376,39 +378,14 @@ func ownsDocumentKnowledge(p models.Principal, d models.DocumentRecord) bool {
 	return d.OwnerID == p.UserID || d.OwnerID == models.SubjectKeyForPrincipal(p)
 }
 
-func intersectsStrings(a, b []string) bool {
-	set := make(map[string]struct{}, len(a))
-	for _, v := range a {
-		set[v] = struct{}{}
-	}
-	for _, v := range b {
-		if _, ok := set[v]; ok {
-			return true
-		}
-	}
-	return false
-}
-
 func extractSnippet(text, query string) string {
 	if query == "" {
 		return text
 	}
 	runes := []rune(text)
-	lower := make([]rune, len(runes))
 	qRunes := []rune(query)
-	for i, r := range runes {
-		lower[i] = r
-		if r >= 'A' && r <= 'Z' {
-			lower[i] = r + ('a' - 'A')
-		}
-	}
-	qLower := make([]rune, len(qRunes))
-	for i, r := range qRunes {
-		qLower[i] = r
-		if r >= 'A' && r <= 'Z' {
-			qLower[i] = r + ('a' - 'A')
-		}
-	}
+	lower := []rune(strings.ToLower(text))
+	qLower := []rune(strings.ToLower(query))
 	idx := -1
 	for i := 0; i+len(qLower) <= len(lower); i++ {
 		match := true

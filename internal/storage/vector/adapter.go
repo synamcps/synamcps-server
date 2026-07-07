@@ -10,6 +10,7 @@ type Record struct {
 	Vector  []float32
 	Payload models.VectorPayload
 	Text    string
+	Score   float64
 }
 
 type Store interface {

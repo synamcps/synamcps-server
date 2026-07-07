@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/synamcps/synamcps-server/internal/models"
+	"github.com/synamcps/synamcps-server/internal/strutil"
 )
 
 type upstreamClient struct {
@@ -211,7 +212,7 @@ func (c *upstreamClient) listTools(ctx context.Context, serverID string, now tim
 		out = append(out, models.MCPServerTool{
 			ServerID:        serverID,
 			ToolName:        name,
-			Description:     asString(m["description"]),
+			Description:     strutil.AsString(m["description"]),
 			InputSchemaJSON: schemaJSON,
 			Enabled:         false,
 			DiscoveredAt:    now,
@@ -239,9 +240,9 @@ func (c *upstreamClient) listResources(ctx context.Context, serverID string, now
 		out = append(out, models.MCPServerResource{
 			ServerID:     serverID,
 			URI:          uri,
-			Name:         asString(m["name"]),
-			MimeType:     asString(m["mimeType"]),
-			Description:  asString(m["description"]),
+			Name:         strutil.AsString(m["name"]),
+			MimeType:     strutil.AsString(m["mimeType"]),
+			Description:  strutil.AsString(m["description"]),
 			Enabled:      false,
 			DiscoveredAt: now,
 		})
@@ -273,7 +274,7 @@ func (c *upstreamClient) listPrompts(ctx context.Context, serverID string, now t
 		out = append(out, models.MCPServerPrompt{
 			ServerID:            serverID,
 			PromptName:          name,
-			Description:         asString(m["description"]),
+			Description:         strutil.AsString(m["description"]),
 			ArgumentsSchemaJSON: argsJSON,
 			Enabled:             false,
 			DiscoveredAt:        now,
@@ -300,9 +301,4 @@ func (c *upstreamClient) getPrompt(ctx context.Context, name string, arguments m
 		params["arguments"] = arguments
 	}
 	return c.call(ctx, "prompts/get", params)
-}
-
-func asString(v any) string {
-	s, _ := v.(string)
-	return s
 }

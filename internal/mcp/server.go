@@ -11,9 +11,11 @@ import (
 	"github.com/synamcps/synamcps-server/internal/auth"
 	"github.com/synamcps/synamcps-server/internal/domainerr"
 	"github.com/synamcps/synamcps-server/internal/knowledge"
+	"github.com/synamcps/synamcps-server/internal/mcpdesc"
 	"github.com/synamcps/synamcps-server/internal/mcpproxy"
 	"github.com/synamcps/synamcps-server/internal/models"
 	"github.com/synamcps/synamcps-server/internal/session"
+	"github.com/synamcps/synamcps-server/internal/strutil"
 	"github.com/synamcps/synamcps-server/internal/usage"
 )
 
@@ -46,11 +48,12 @@ func NewServer(deps ServerDeps) *Server {
 	}
 }
 
-func (s *Server) HandleInitialize(w http.ResponseWriter, p models.Principal) {
+func (s *Server) HandleInitialize(ctx context.Context, w http.ResponseWriter, p models.Principal, id json.RawMessage) {
 	sess := s.sessions.CreateMCPSession(p, 12*time.Hour)
 	w.Header().Set("Mcp-Session-Id", sess.SessionID)
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(NewResultResponse(json.RawMessage(`"init"`), s.initializeResult(context.Background(), p, models.APIAccessContext{}, "2024-11-05", sess.SessionID)))
+	accessCtx, _ := auth.AccessContextFromContext(ctx)
+	_ = json.NewEncoder(w).Encode(NewResultResponse(id, s.initializeResult(ctx, p, accessCtx, "2024-11-05", sess.SessionID)))
 }
 
 func (s *Server) HandleJSONRPC(ctx context.Context, p models.Principal, request map[string]any) (map[string]any, error) {
@@ -97,7 +100,7 @@ func (s *Server) handleRequest(ctx context.Context, p models.Principal, request 
 	if params == nil {
 		params = map[string]any{}
 	}
-	storageID := asString(params["storageId"])
+	storageID := strutil.AsString(params["storageId"])
 	accessCtx, _ := auth.AccessContextFromContext(ctx)
 	status := "ok"
 	defer func() {
@@ -137,7 +140,7 @@ func (s *Server) dispatch(ctx context.Context, p models.Principal, accessCtx mod
 	switch method {
 	case "initialize":
 		sess := s.sessions.CreateMCPSession(p, 12*time.Hour)
-		protocolVersion := asString(params["protocolVersion"])
+		protocolVersion := strutil.AsString(params["protocolVersion"])
 		if protocolVersion == "" {
 			protocolVersion = "2024-11-05"
 		}
@@ -152,7 +155,7 @@ func (s *Server) dispatch(ctx context.Context, p models.Principal, accessCtx mod
 		}
 		return result, nil
 	case "tools/call":
-		originalName := asString(params["name"])
+		originalName := strutil.AsString(params["name"])
 		arguments, _ := params["arguments"].(map[string]any)
 		if arguments == nil {
 			arguments = map[string]any{}
@@ -185,7 +188,7 @@ func (s *Server) dispatch(ctx context.Context, p models.Principal, accessCtx mod
 		}
 		return result, nil
 	case "resources/read":
-		uri := asString(params["uri"])
+		uri := strutil.AsString(params["uri"])
 		servers, err := s.accessibleMCPServers(ctx, p, accessCtx)
 		if err != nil {
 			*status = statusFromError(err)
@@ -209,7 +212,7 @@ func (s *Server) dispatch(ctx context.Context, p models.Principal, accessCtx mod
 		}
 		return result, nil
 	case "prompts/get":
-		name := asString(params["name"])
+		name := strutil.AsString(params["name"])
 		arguments, _ := params["arguments"].(map[string]any)
 		servers, err := s.accessibleMCPServers(ctx, p, accessCtx)
 		if err != nil {
@@ -229,13 +232,13 @@ func (s *Server) dispatch(ctx context.Context, p models.Principal, accessCtx mod
 	case "knowledge.save":
 		in := knowledge.SaveInput{
 			StorageID:  *storageID,
-			Title:      asString(params["title"]),
-			Text:       asString(params["text"]),
-			MimeType:   asString(params["mimeType"]),
-			Visibility: models.Visibility(asString(params["visibility"])),
-			GroupIDs:   asStringSlice(params["groupIds"]),
-			Source:     asString(params["source"]),
-			SourceURL:  asString(params["sourceUrl"]),
+			Title:      strutil.AsString(params["title"]),
+			Text:       strutil.AsString(params["text"]),
+			MimeType:   strutil.AsString(params["mimeType"]),
+			Visibility: models.Visibility(strutil.AsString(params["visibility"])),
+			GroupIDs:   strutil.AsStringSlice(params["groupIds"]),
+			Source:     strutil.AsString(params["source"]),
+			SourceURL:  strutil.AsString(params["sourceUrl"]),
 			Channel:    "mcp",
 		}
 		doc, err := s.knowledge.Save(ctx, p, accessCtx, in)
@@ -245,7 +248,7 @@ func (s *Server) dispatch(ctx context.Context, p models.Principal, accessCtx mod
 		}
 		return doc, nil
 	case "knowledge.get":
-		doc, err := s.knowledge.Get(ctx, p, accessCtx, asString(params["docId"]))
+		doc, err := s.knowledge.Get(ctx, p, accessCtx, strutil.AsString(params["docId"]))
 		if err != nil {
 			*status = statusFromError(err)
 			return nil, err
@@ -253,20 +256,20 @@ func (s *Server) dispatch(ctx context.Context, p models.Principal, accessCtx mod
 		*storageID = doc.StorageID
 		return doc, nil
 	case "knowledge.delete":
-		if err := s.knowledge.Delete(ctx, p, accessCtx, asString(params["docId"])); err != nil {
+		if err := s.knowledge.Delete(ctx, p, accessCtx, strutil.AsString(params["docId"])); err != nil {
 			*status = statusFromError(err)
 			return nil, err
 		}
 		return map[string]string{"status": "deleted"}, nil
 	case "knowledge.search":
 		req := models.SearchRequest{
-			Query: asString(params["query"]),
+			Query: strutil.AsString(params["query"]),
 			TopK:  asInt(params["topK"]),
 			Filters: models.PageRequest{
 				StorageID:     *storageID,
-				Source:        asString(params["source"]),
-				SourceURL:     asString(params["sourceUrl"]),
-				SourceURLMode: asString(params["sourceUrlMode"]),
+				Source:        strutil.AsString(params["source"]),
+				SourceURL:     strutil.AsString(params["sourceUrl"]),
+				SourceURLMode: strutil.AsString(params["sourceUrlMode"]),
 			},
 		}
 		hits, err := s.knowledge.Search(ctx, p, accessCtx, req, true)
@@ -428,13 +431,13 @@ func defaultTools(storageEnums []string, writeAllowed bool) []map[string]any {
 		storageProperty["enum"] = storageEnums
 	}
 	tools := []map[string]any{
-		toolDescriptor("knowledge_search", "Search knowledge in an allowed storage", storageProperty, map[string]any{"query": map[string]any{"type": "string"}, "topK": map[string]any{"type": "integer"}}),
-		toolDescriptor("knowledge_get", "Get a document by id", storageProperty, map[string]any{"docId": map[string]any{"type": "string"}}),
+		knowledgeToolDescriptor("knowledge_search", "Search knowledge in an allowed storage", storageProperty, map[string]any{"query": map[string]any{"type": "string"}, "topK": map[string]any{"type": "integer"}}),
+		knowledgeToolDescriptor("knowledge_get", "Get a document by id", storageProperty, map[string]any{"docId": map[string]any{"type": "string"}}),
 	}
 	if writeAllowed {
 		tools = append(tools,
-			toolDescriptor("knowledge_save", "Save knowledge into an allowed storage", storageProperty, map[string]any{"title": map[string]any{"type": "string"}, "text": map[string]any{"type": "string"}, "mimeType": map[string]any{"type": "string"}}),
-			toolDescriptor("knowledge_delete", "Delete a document from an allowed storage", storageProperty, map[string]any{"docId": map[string]any{"type": "string"}}),
+			knowledgeToolDescriptor("knowledge_save", "Save knowledge into an allowed storage", storageProperty, map[string]any{"title": map[string]any{"type": "string"}, "text": map[string]any{"type": "string"}, "mimeType": map[string]any{"type": "string"}}),
+			knowledgeToolDescriptor("knowledge_delete", "Delete a document from an allowed storage", storageProperty, map[string]any{"docId": map[string]any{"type": "string"}}),
 		)
 	}
 	return tools
@@ -455,22 +458,18 @@ func methodForToolName(name string) string {
 	}
 }
 
-func toolDescriptor(name, description string, storageProperty map[string]any, extra map[string]any) map[string]any {
+func knowledgeToolDescriptor(name, description string, storageProperty map[string]any, extra map[string]any) map[string]any {
 	props := map[string]any{"storageId": storageProperty}
 	required := []string{"storageId"}
 	for k, v := range extra {
 		props[k] = v
 		required = append(required, k)
 	}
-	return map[string]any{
-		"name":        name,
-		"description": description,
-		"inputSchema": map[string]any{
-			"type":       "object",
-			"properties": props,
-			"required":   required,
-		},
-	}
+	return mcpdesc.Tool(name, description, map[string]any{
+		"type":       "object",
+		"properties": props,
+		"required":   required,
+	})
 }
 
 func operationForMethod(method string) string {
@@ -499,25 +498,6 @@ func statusFromError(err error) string {
 		return "forbidden"
 	}
 	return "error"
-}
-
-func asString(v any) string {
-	s, _ := v.(string)
-	return s
-}
-
-func asStringSlice(v any) []string {
-	raw, ok := v.([]any)
-	if !ok {
-		return nil
-	}
-	out := make([]string, 0, len(raw))
-	for _, item := range raw {
-		if s, ok := item.(string); ok {
-			out = append(out, s)
-		}
-	}
-	return out
 }
 
 func asInt(v any) int {

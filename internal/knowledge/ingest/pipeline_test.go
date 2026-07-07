@@ -86,6 +86,9 @@ func TestSaveReturnsProcessingThenWorkerIndexes(t *testing.T) {
 	if len(hits) == 0 {
 		t.Fatal("expected indexed vectors")
 	}
+	if hits[0].Score == 0 {
+		t.Fatal("expected vector score to be populated")
+	}
 }
 
 func TestDeleteEnqueuesVectorCleanup(t *testing.T) {

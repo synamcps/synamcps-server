@@ -15,6 +15,7 @@ import (
 	"github.com/synamcps/synamcps-server/internal/models"
 	"github.com/synamcps/synamcps-server/internal/storage/vector"
 	"github.com/synamcps/synamcps-server/internal/storage/vector/pgvector"
+	"github.com/synamcps/synamcps-server/internal/strutil"
 )
 
 type Store struct {
@@ -72,6 +73,7 @@ func (s *Store) Search(ctx context.Context, query []float32, topK int, filter mo
 	var resp struct {
 		Result []struct {
 			Payload map[string]any `json:"payload"`
+			Score   float64        `json:"score"`
 		} `json:"result"`
 	}
 	if err := json.Unmarshal(raw, &resp); err != nil {
@@ -95,7 +97,11 @@ func (s *Store) Search(ctx context.Context, query []float32, topK int, filter mo
 				continue
 			}
 		}
-		out = append(out, vector.Record{Payload: payload})
+		out = append(out, vector.Record{
+			Payload: payload,
+			Text:    strutil.AsString(item.Payload["text"]),
+			Score:   item.Score,
+		})
 	}
 	return out, nil
 }
@@ -175,37 +181,18 @@ func qdrantPayload(rec vector.Record) map[string]any {
 
 func fromQdrantPayload(m map[string]any) models.VectorPayload {
 	return models.VectorPayload{
-		DocID:      asString(m["doc_id"]),
-		StorageID:  asString(m["storage_id"]),
-		ChunkID:    asString(m["chunk_id"]),
-		Visibility: models.Visibility(asString(m["visibility"])),
-		OwnerID:    asString(m["owner_id"]),
-		GroupIDs:   asStringSlice(m["group_ids"]),
+		DocID:      strutil.AsString(m["doc_id"]),
+		StorageID:  strutil.AsString(m["storage_id"]),
+		ChunkID:    strutil.AsString(m["chunk_id"]),
+		Visibility: models.Visibility(strutil.AsString(m["visibility"])),
+		OwnerID:    strutil.AsString(m["owner_id"]),
+		GroupIDs:   strutil.AsStringSlice(m["group_ids"]),
 		IsSummary:  asBool(m["is_summary"]),
-		Source:     asString(m["source"]),
-		SourceURL:  asString(m["source_url"]),
-		S3Key:      asString(m["s3_key"]),
-		SourceHash: asString(m["source_hash"]),
+		Source:     strutil.AsString(m["source"]),
+		SourceURL:  strutil.AsString(m["source_url"]),
+		S3Key:      strutil.AsString(m["s3_key"]),
+		SourceHash: strutil.AsString(m["source_hash"]),
 	}
-}
-
-func asString(v any) string {
-	s, _ := v.(string)
-	return s
-}
-
-func asStringSlice(v any) []string {
-	arr, ok := v.([]any)
-	if !ok {
-		return nil
-	}
-	out := make([]string, 0, len(arr))
-	for _, x := range arr {
-		if s, ok := x.(string); ok {
-			out = append(out, s)
-		}
-	}
-	return out
 }
 
 func asBool(v any) bool {

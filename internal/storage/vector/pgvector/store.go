@@ -78,19 +78,19 @@ func (s *Store) Search(ctx context.Context, query []float32, topK int, filter mo
 		}
 		out = append(out, r)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Payload.DocID < out[j].Payload.DocID })
-
-	if topK <= 0 || topK > len(out) {
-		topK = len(out)
-	}
 	scored := make([]scoredRecord, 0, len(out))
-	for _, r := range out[:topK] {
+	for _, r := range out {
 		scored = append(scored, scoredRecord{rec: r, score: cosine(query, r.Vector)})
 	}
 	sort.Slice(scored, func(i, j int) bool { return scored[i].score > scored[j].score })
+	if topK <= 0 || topK > len(scored) {
+		topK = len(scored)
+	}
 	result := make([]vector.Record, 0, len(scored))
-	for _, s := range scored {
-		result = append(result, s.rec)
+	for _, s := range scored[:topK] {
+		rec := s.rec
+		rec.Score = s.score
+		result = append(result, rec)
 	}
 	return result, nil
 }
@@ -213,7 +213,9 @@ func (s *Store) searchDB(ctx context.Context, query []float32, topK int, filter 
 	}
 	out := make([]vector.Record, 0, topK)
 	for _, item := range scored[:topK] {
-		out = append(out, item.rec)
+		rec := item.rec
+		rec.Score = item.score
+		out = append(out, rec)
 	}
 	return out, nil
 }
