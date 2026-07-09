@@ -1,6 +1,6 @@
 APP=server
 
-.PHONY: test integration-test compose-up compose-down seed-dev migrate-up migrate-down
+.PHONY: test integration-test compose-up compose-down seed-dev migrate-up migrate-down examples-smoke
 
 test:
 	go test ./...
@@ -22,3 +22,6 @@ compose-down:
 
 seed-dev:
 	sh scripts/seed-dev.sh
+
+examples-smoke:
+	bash scripts/examples/smoke.sh

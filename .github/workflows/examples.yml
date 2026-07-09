@@ -1,0 +1,25 @@
+name: Example Smoke
+
+on:
+  pull_request:
+    paths:
+      - "SKILLS.md"
+      - "scripts/examples/**"
+      - ".github/workflows/examples.yml"
+      - ".github/pull_request_template.md"
+  push:
+    branches:
+      - main
+    paths:
+      - "SKILLS.md"
+      - "scripts/examples/**"
+      - ".github/workflows/examples.yml"
+      - ".github/pull_request_template.md"
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check example syntax and help output
+        run: make examples-smoke
