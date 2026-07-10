@@ -8,6 +8,8 @@ transport:
 
 web:
   enable_ui: true
+  user_ui:
+    enabled: true
   default_admin:
     enabled: true
     username: "admin"
@@ -117,3 +119,20 @@ mcp_proxy:
   session_idle_timeout_seconds: 300
   connect_timeout_seconds: 30
   call_timeout_seconds: 120
+
+agent:
+  enabled: true
+  provider: "openai-compatible"
+  model: "tencent/hy3:free"
+  api: "https://openrouter.ai/api/v1/chat/completions"
+  api_key_env_ref: "env:AGENT_API_KEY"
+  system_prompt: "You are a corporate assistant. Get most related information from the knowledge base as additional context and answer the question. Answer using the selected knowledge datasets and cite document IDs."
+  max_conversation_messages: 100
+  max_context_documents: 5
+  max_context_chars: 6000
+  max_response_tokens: 512
+  conversation_ttl_hours: 720
+  allowed_tools:
+    - knowledge_search
+    - knowledge_get
+    - knowledge_save

@@ -20,13 +20,19 @@ import (
 var loginHTML string
 
 //go:embed templates/app.html
-var baseHTML string
+var adminHTML string
+
+//go:embed templates/user-app.html
+var userHTML string
 
 //go:embed templates/mcp-connect.html
 var mcpConnectHTML string
 
 //go:embed templates/app.js
-var appJS []byte
+var adminJS []byte
+
+//go:embed templates/user-app.js
+var userJS []byte
 
 //go:embed templates/mcp-connect.js
 var mcpConnectJS []byte
@@ -58,15 +64,18 @@ func NewHandler(cfg config.Config, sessions *session.Store, accessService *acces
 
 	// Embedded JS bundles (registered before the generic /assets/ file server;
 	// exact-path patterns take precedence over the subtree pattern).
-	mux.HandleFunc("/assets/app.js", serveAsset(appJS, "application/javascript; charset=utf-8"))
+	mux.HandleFunc("/assets/app.js", serveAsset(adminJS, "application/javascript; charset=utf-8"))
+	mux.HandleFunc("/assets/admin.js", serveAsset(adminJS, "application/javascript; charset=utf-8"))
+	mux.HandleFunc("/assets/user-app.js", serveAsset(userJS, "application/javascript; charset=utf-8"))
 	mux.HandleFunc("/assets/mcp-connect.js", serveAsset(mcpConnectJS, "application/javascript; charset=utf-8"))
 	mux.Handle("/assets/", http.StripPrefix("/assets/", http.FileServer(http.Dir("web/assets"))))
+	mux.HandleFunc("/", indexHandler(cfg, sessions))
 	mux.HandleFunc("/login", loginHandler(cfg, sessions, accessService))
 	mux.HandleFunc("/logout", logoutHandler())
-	mux.HandleFunc("/app", appHandler(sessions))
-	mux.HandleFunc("/app/mcp-connect", func(w http.ResponseWriter, r *http.Request) {
-		writeHTML(w, mcpConnectHTML)
-	})
+	mux.HandleFunc("/admin", adminHandler(sessions))
+	mux.HandleFunc("/admin/mcp-connect", adminMCPConnectHandler(sessions))
+	mux.HandleFunc("/app", userAppHandler(cfg, sessions))
+	mux.HandleFunc("/app/mcp-connect", redirectHandler("/app"))
 	return mux
 }
 
@@ -148,6 +157,10 @@ func createWebLogin(w http.ResponseWriter, r *http.Request, sessions *session.St
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
 	})
+	if isAdminPrincipal(principal) {
+		http.Redirect(w, r, "/admin", http.StatusSeeOther)
+		return
+	}
 	http.Redirect(w, r, "/app", http.StatusSeeOther)
 }
 
@@ -166,18 +179,101 @@ func logoutHandler() http.HandlerFunc {
 	}
 }
 
-func appHandler(sessions *session.Store) http.HandlerFunc {
+func indexHandler(cfg config.Config, sessions *session.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		cookie, err := r.Cookie("session_id")
-		if err != nil {
-			http.Redirect(w, r, "/login", http.StatusSeeOther)
+		if r.URL.Path != "/" {
+			http.NotFound(w, r)
 			return
 		}
-		ws, ok := sessions.GetWebSession(cookie.Value)
+		ws, ok := webSessionFromRequest(r, sessions)
 		if !ok {
 			http.Redirect(w, r, "/login", http.StatusSeeOther)
 			return
 		}
-		writeHTML(w, strings.ReplaceAll(baseHTML, "__CSRF_TOKEN__", ws.CSRFToken))
+		if isAdminPrincipal(ws.Principal) {
+			http.Redirect(w, r, "/admin", http.StatusSeeOther)
+			return
+		}
+		if cfg.Web.UserUI.Enabled {
+			http.Redirect(w, r, "/app", http.StatusSeeOther)
+			return
+		}
+		http.Error(w, "user UI disabled", http.StatusNotFound)
 	}
+}
+
+func adminHandler(sessions *session.Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/admin" {
+			http.NotFound(w, r)
+			return
+		}
+		ws, ok := webSessionFromRequest(r, sessions)
+		if !ok {
+			http.Redirect(w, r, "/login", http.StatusSeeOther)
+			return
+		}
+		if !isAdminPrincipal(ws.Principal) {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+		writeHTML(w, strings.ReplaceAll(adminHTML, "__CSRF_TOKEN__", ws.CSRFToken))
+	}
+}
+
+func adminMCPConnectHandler(sessions *session.Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		ws, ok := webSessionFromRequest(r, sessions)
+		if !ok {
+			http.Redirect(w, r, "/login", http.StatusSeeOther)
+			return
+		}
+		if !isAdminPrincipal(ws.Principal) {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+		writeHTML(w, mcpConnectHTML)
+	}
+}
+
+func userAppHandler(cfg config.Config, sessions *session.Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/app" {
+			http.NotFound(w, r)
+			return
+		}
+		if !cfg.Web.UserUI.Enabled {
+			http.Error(w, "user UI disabled", http.StatusNotFound)
+			return
+		}
+		ws, ok := webSessionFromRequest(r, sessions)
+		if !ok {
+			http.Redirect(w, r, "/login", http.StatusSeeOther)
+			return
+		}
+		writeHTML(w, strings.ReplaceAll(userHTML, "__CSRF_TOKEN__", ws.CSRFToken))
+	}
+}
+
+func redirectHandler(path string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, path, http.StatusSeeOther)
+	}
+}
+
+func webSessionFromRequest(r *http.Request, sessions *session.Store) (models.WebSession, bool) {
+	cookie, err := r.Cookie("session_id")
+	if err != nil {
+		return models.WebSession{}, false
+	}
+	return sessions.GetWebSession(cookie.Value)
+}
+
+func isAdminPrincipal(p models.Principal) bool {
+	for _, scope := range p.Scopes {
+		if scope == "platform_admin" || scope == "admin" {
+			return true
+		}
+	}
+	return false
 }

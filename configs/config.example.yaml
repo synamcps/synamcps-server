@@ -8,6 +8,8 @@ transport:
 
 web:
   enable_ui: true
+  user_ui:
+    enabled: true
   default_admin:
     enabled: true
     username: "admin"
@@ -121,3 +123,20 @@ mcp_proxy:
   session_idle_timeout_seconds: 300
   connect_timeout_seconds: 30
   call_timeout_seconds: 120
+
+agent:
+  enabled: true
+  provider: "simple"
+  model: "syna-simple-agent"
+  api: ""
+  api_key_env_ref: ""
+  system_prompt: "You are a SynaMCPs assistant. Answer using the selected knowledge datasets and cite document IDs."
+  max_conversation_messages: 100
+  max_context_documents: 5
+  max_context_chars: 6000
+  max_response_tokens: 512
+  conversation_ttl_hours: 720
+  allowed_tools:
+    - knowledge_search
+    - knowledge_get
+    - knowledge_save

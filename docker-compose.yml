@@ -16,7 +16,7 @@ services:
       - postgres
       - minio
     healthcheck:
-      test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:8080/app"]
+      test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:8080/healthz"]
       interval: 15s
       timeout: 3s
       retries: 10

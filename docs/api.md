@@ -14,6 +14,29 @@
 - `POST /api/knowledge/search`
 - `DELETE /api/knowledge/{docId}`
 
+## Agent Chat Endpoints
+
+- `GET /api/agent/conversations`
+- `POST /api/agent/conversations`
+- `GET /api/agent/conversations/{id}/messages`
+- `POST /api/agent/conversations/{id}/messages`
+
+`POST /api/agent/conversations` accepts `title` and `datasetStorageIds`. The
+dataset list is validated against the caller's current readable storages. If it
+is omitted, the agent uses all readable storages for that caller.
+
+`POST /api/agent/conversations/{id}/messages` streams an SSE response with:
+
+- `conversation`: updated conversation metadata
+- `documents`: document references used as RAG context
+- `saved_memory`: document reference when the user asks the agent to remember something
+- `message`: persisted assistant message
+- `done`: terminal event
+
+The agent searches and saves knowledge through the existing knowledge service,
+so ACL, token scopes, and document visibility are enforced exactly as they are
+for REST and MCP knowledge tools.
+
 ## Source Metadata
 
 - `source`: optional source type

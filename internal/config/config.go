@@ -30,14 +30,34 @@ type Config struct {
 	Search        SearchConfig        `yaml:"search"`
 	Usage         UsageConfig         `yaml:"usage"`
 	MCPProxy      MCPProxyConfig      `yaml:"mcp_proxy"`
+	Agent         AgentConfig         `yaml:"agent"`
+}
+
+type AgentConfig struct {
+	Enabled                 bool     `yaml:"enabled"`
+	Provider                string   `yaml:"provider"`
+	Model                   string   `yaml:"model"`
+	API                     string   `yaml:"api"`
+	APIKeyEnvRef            string   `yaml:"api_key_env_ref"`
+	SystemPrompt            string   `yaml:"system_prompt"`
+	MaxConversationMessages int      `yaml:"max_conversation_messages"`
+	MaxContextDocuments     int      `yaml:"max_context_documents"`
+	MaxContextChars         int      `yaml:"max_context_chars"`
+	MaxResponseTokens       int      `yaml:"max_response_tokens"`
+	AllowedTools            []string `yaml:"allowed_tools"`
+	ConversationTTLHours    int      `yaml:"conversation_ttl_hours"`
+}
+
+func (c Config) AgentAPIKey() string {
+	return resolveSecret(c.Agent.APIKeyEnvRef)
 }
 
 type MCPProxyConfig struct {
-	Enabled                   bool   `yaml:"enabled"`
+	Enabled                    bool   `yaml:"enabled"`
 	SecretsEncryptionKeyEnvRef string `yaml:"secrets_encryption_key_env_ref"`
-	SessionIdleTimeoutSeconds int    `yaml:"session_idle_timeout_seconds"`
-	ConnectTimeoutSeconds     int    `yaml:"connect_timeout_seconds"`
-	CallTimeoutSeconds        int    `yaml:"call_timeout_seconds"`
+	SessionIdleTimeoutSeconds  int    `yaml:"session_idle_timeout_seconds"`
+	ConnectTimeoutSeconds      int    `yaml:"connect_timeout_seconds"`
+	CallTimeoutSeconds         int    `yaml:"call_timeout_seconds"`
 }
 
 func (c Config) MCPProxySecretsKey() string {
@@ -55,15 +75,20 @@ type TransportConfig struct {
 }
 
 type WebConfig struct {
-	EnableUI bool             `yaml:"enable_ui"`
+	EnableUI bool               `yaml:"enable_ui"`
+	UserUI   UserUIConfig       `yaml:"user_ui"`
 	Admin    DefaultAdminConfig `yaml:"default_admin"`
 }
 
+type UserUIConfig struct {
+	Enabled bool `yaml:"enabled"`
+}
+
 type DefaultAdminConfig struct {
-	Enabled       bool   `yaml:"enabled"`
-	Username      string `yaml:"username"`
-	PasswordEnvRef string `yaml:"password_env_ref"`
-	SessionTTLHours int  `yaml:"session_ttl_hours"`
+	Enabled         bool   `yaml:"enabled"`
+	Username        string `yaml:"username"`
+	PasswordEnvRef  string `yaml:"password_env_ref"`
+	SessionTTLHours int    `yaml:"session_ttl_hours"`
 }
 
 type OAuthConfig struct {
@@ -139,18 +164,18 @@ type APIConfig struct {
 }
 
 type UsageConfig struct {
-	Enabled          bool                  `yaml:"enabled"`
-	RedisTimeSeries  bool                  `yaml:"redis_timeseries"`
-	RetentionHours   int                   `yaml:"retention_hours"`
-	DefaultRateLimit RateLimitConfig       `yaml:"default_rate_limit"`
-	Exporters        UsageExportersConfig  `yaml:"exporters"`
+	Enabled          bool                 `yaml:"enabled"`
+	RedisTimeSeries  bool                 `yaml:"redis_timeseries"`
+	RetentionHours   int                  `yaml:"retention_hours"`
+	DefaultRateLimit RateLimitConfig      `yaml:"default_rate_limit"`
+	Exporters        UsageExportersConfig `yaml:"exporters"`
 }
 
 type RateLimitConfig struct {
 	RequestsPerMinute int `yaml:"requests_per_minute"`
 	RequestsPerHour   int `yaml:"requests_per_hour"`
 	RequestsPerDay    int `yaml:"requests_per_day"`
-	Burst              int `yaml:"burst"`
+	Burst             int `yaml:"burst"`
 }
 
 type UsageExportersConfig struct {
@@ -261,6 +286,33 @@ func (c *Config) Validate() error {
 	}
 	if c.Usage.Exporters.VictoriaMetrics.IntervalSeconds <= 0 {
 		c.Usage.Exporters.VictoriaMetrics.IntervalSeconds = 30
+	}
+	if c.Agent.Provider == "" {
+		c.Agent.Provider = "simple"
+	}
+	if c.Agent.Model == "" {
+		c.Agent.Model = "syna-simple-agent"
+	}
+	if c.Agent.SystemPrompt == "" {
+		c.Agent.SystemPrompt = "You are a SynaMCPs assistant. Answer using the provided knowledge context and cite document IDs when relevant."
+	}
+	if c.Agent.MaxConversationMessages <= 0 {
+		c.Agent.MaxConversationMessages = 100
+	}
+	if c.Agent.MaxContextDocuments <= 0 {
+		c.Agent.MaxContextDocuments = 5
+	}
+	if c.Agent.MaxContextChars <= 0 {
+		c.Agent.MaxContextChars = 6000
+	}
+	if c.Agent.MaxResponseTokens <= 0 {
+		c.Agent.MaxResponseTokens = 512
+	}
+	if c.Agent.ConversationTTLHours <= 0 {
+		c.Agent.ConversationTTLHours = 720
+	}
+	if len(c.Agent.AllowedTools) == 0 {
+		c.Agent.AllowedTools = []string{"knowledge_search", "knowledge_get", "knowledge_save"}
 	}
 	if c.Metadata.DSN == "" {
 		return errors.New("metadata_catalog.dsn is required")

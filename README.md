@@ -26,7 +26,9 @@ make compose-up
 
 Open:
 
-- Web UI: `http://localhost:8080/login`
+- Login: `http://localhost:8080/login`
+- Admin UI: `http://localhost:8080/admin`
+- User app: `http://localhost:8080/app`
 - MCP endpoint (streamable): `http://localhost:8080/mcp`
 - HTTP API: `http://localhost:8080/api/*`
 
@@ -360,7 +362,7 @@ curl -N http://localhost:8080/mcp \
 
 ### MCP Connect (Web UI)
 
-The Admin UI includes an **MCP Connect** page that generates:
+The Admin UI (`/admin`) includes an **MCP Connect** page that generates:
 
 - config file name
 - `configBody` (JSON)
@@ -393,7 +395,7 @@ Helpful:
 ### CORS
 
 `api.allowed_origins` is a strict allowlist. Unknown origins are rejected.
-Web UI routes (`/`, `/login`, `/logout`, `/app*`) bypass the origin check.
+Web UI routes (`/`, `/login`, `/logout`, `/app*`, `/admin*`) bypass the origin check.
 
 ---
 

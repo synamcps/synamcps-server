@@ -13,6 +13,12 @@ make compose-up
 
 Server starts on `http://localhost:8080`.
 
+Web routes:
+
+- `/login`: shared login. Platform admins go to `/admin`; regular users go to `/app`.
+- `/admin`: administrative console for users/groups/storages/tokens/MCP proxy/status.
+- `/app`: user interface centered on the SynaMCPs agent chat when `web.user_ui.enabled=true`.
+
 ## Config
 
 - default config: `configs/config.example.yaml`
@@ -27,6 +33,8 @@ Key sections:
 - `redis`: session backend settings (`addr`, `password`, `db`, key prefix, TTL)
 - `limits.max_upload_bytes`: max request body size for the REST API (oversized bodies get `413`; default ~40 MiB)
 - `usage`: per-token rate limits (minute/hour/day + burst), retention and exporters
+- `agent`: built-in chat agent provider/model, system prompt, context limits, allowed knowledge tools, and conversation TTL
+- `web.user_ui.enabled`: enables the user-facing `/app` interface independently from the admin UI
 
 ## Deployment model
 

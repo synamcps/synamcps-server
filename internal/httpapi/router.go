@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"github.com/synamcps/synamcps-server/internal/access"
+	"github.com/synamcps/synamcps-server/internal/agent"
 	"github.com/synamcps/synamcps-server/internal/auth"
 	"github.com/synamcps/synamcps-server/internal/knowledge"
 	"github.com/synamcps/synamcps-server/internal/mcpproxy"
@@ -23,6 +24,7 @@ type RouterDeps struct {
 	MCPStore              *mcpproxy.Store
 	MCPManager            *mcpproxy.Manager
 	MCPAccess             *mcpproxy.AccessService
+	Agent                 *agent.Service
 	MaxBodyBytes          int64
 }
 
@@ -40,17 +42,24 @@ func NewRouter(deps RouterDeps) http.Handler {
 		}
 	}
 	ingestHandler := NewIngestHandler(deps.Knowledge)
-	guard := func(h http.HandlerFunc) http.Handler {
+	guard := func(h http.Handler) http.Handler {
 		return maxBodyMiddleware(deps.MaxBodyBytes, authResolver.Middleware(rateLimitMiddleware(deps.Usage, h)))
 	}
-	mux.Handle("GET /api/knowledge", guard(handler.List))
-	mux.Handle("POST /api/knowledge", guard(handler.Create("api")))
-	mux.Handle("POST /api/admin/knowledge", guard(handler.Create("admin")))
-	mux.Handle("POST /api/knowledge/ingest/file", guard(ingestHandler.IngestFile))
-	mux.Handle("POST /api/knowledge/ingest/link", guard(ingestHandler.IngestLink))
-	mux.Handle("POST /api/knowledge/search", guard(handler.Search))
-	mux.Handle("GET /api/knowledge/", guard(handler.Get))
-	mux.Handle("DELETE /api/knowledge/", guard(handler.Delete))
+	mux.Handle("GET /api/knowledge", guard(http.HandlerFunc(handler.List)))
+	mux.Handle("POST /api/knowledge", guard(http.HandlerFunc(handler.Create("api"))))
+	mux.Handle("POST /api/admin/knowledge", guard(http.HandlerFunc(handler.Create("admin"))))
+	mux.Handle("POST /api/knowledge/ingest/file", guard(http.HandlerFunc(ingestHandler.IngestFile)))
+	mux.Handle("POST /api/knowledge/ingest/link", guard(http.HandlerFunc(ingestHandler.IngestLink)))
+	mux.Handle("POST /api/knowledge/search", guard(http.HandlerFunc(handler.Search)))
+	mux.Handle("GET /api/knowledge/", guard(http.HandlerFunc(handler.Get)))
+	mux.Handle("DELETE /api/knowledge/", guard(http.HandlerFunc(handler.Delete)))
+	if deps.Agent != nil {
+		mux.Handle("/api/agent/", guard(deps.AgentHandler()))
+	}
 
 	return mux
+}
+
+func (deps RouterDeps) AgentHandler() http.Handler {
+	return NewAgentHandler(deps.Agent)
 }

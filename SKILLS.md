@@ -26,6 +26,7 @@ Configuration is loaded from `CONFIG_PATH`; Docker Compose uses `/app/configs/co
 Key config sections:
 
 - `server`: listen address and `dev_mode`.
+- `web`: shared login, admin UI, and `web.user_ui.enabled` for the user-facing `/app`.
 - `oauth` / `teleport`: identity providers. See `docs/auth-setup.md`.
 - `metadata_catalog`: Postgres DSN and pool sizing.
 - `s3`: object storage endpoint, bucket, credentials env refs, and large-document threshold.
@@ -108,6 +109,28 @@ MCP knowledge tools:
 - `knowledge_search`
 - `knowledge_get`
 - `knowledge_delete`
+
+## Agent Chat
+
+The built-in agent uses selected SynaMCPs storages as memory. It searches only
+the conversation datasets intersected with the caller's current ACL/token
+rights, and it saves memories through the same knowledge write path.
+
+Web UI routes:
+
+- `/login`: shared login.
+- `/admin`: administrator console; server-side admin role is required.
+- `/app`: user chat app when `web.user_ui.enabled=true`.
+
+REST agent endpoints:
+
+- Create/list conversations: `POST /api/agent/conversations`, `GET /api/agent/conversations`
+- Send message: `POST /api/agent/conversations/{id}/messages`
+- Read history: `GET /api/agent/conversations/{id}/messages`
+
+Message responses are SSE events: `conversation`, `documents`, optional
+`saved_memory`, `message`, and `done`. Users can ask "remember ..." or
+"запомни ..." to save a personal memory into the first selected dataset.
 
 Visibility rules:
 

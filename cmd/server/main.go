@@ -16,6 +16,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/synamcps/synamcps-server/internal/access"
+	"github.com/synamcps/synamcps-server/internal/agent"
 	"github.com/synamcps/synamcps-server/internal/auth"
 	"github.com/synamcps/synamcps-server/internal/config"
 	"github.com/synamcps/synamcps-server/internal/httpapi"
@@ -140,6 +141,15 @@ func main() {
 	if err != nil {
 		log.Fatalf("init knowledge service: %v", err)
 	}
+	var agentService *agent.Service
+	if cfg.Agent.Enabled {
+		agentStore := agent.NewStore(pgPool)
+		chatModel := llm.NewChatModel(cfg.Agent, cfg.AgentAPIKey())
+		agentService, err = agent.NewService(cfg.Agent, agentStore, knowledgeService, accessService, chatModel, usageService)
+		if err != nil {
+			log.Fatalf("init agent service: %v", err)
+		}
+	}
 
 	rootMux := http.NewServeMux()
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
@@ -168,6 +178,7 @@ func main() {
 		MCPStore:              mcpStore,
 		MCPManager:            mcpManager,
 		MCPAccess:             mcpAccess,
+		Agent:                 agentService,
 		MaxBodyBytes:          cfg.Limits.MaxUploadBytes,
 	})
 	rootMux.Handle("/api/", apiRouter)
@@ -310,7 +321,7 @@ func withMiddlewares(next http.Handler, cfg config.Config) http.Handler {
 }
 
 func isWebRoute(path string) bool {
-	return path == "/" || path == "/login" || path == "/logout" || strings.HasPrefix(path, "/app")
+	return path == "/" || path == "/login" || path == "/logout" || strings.HasPrefix(path, "/app") || strings.HasPrefix(path, "/admin")
 }
 
 func isAllowedOrigin(origin, host string, allowlist []string) bool {
