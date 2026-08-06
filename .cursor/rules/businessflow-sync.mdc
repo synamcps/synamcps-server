@@ -1,0 +1,12 @@
+---
+description: Synchronize user-visible Synamcps features with businessflow and the landing
+alwaysApply: true
+---
+
+# Feature business synchronization
+
+When product work adds, changes, releases, previews, or deprecates user-visible behavior, apply `.cursor/skills/sync-businessflow-feature/SKILL.md` before considering the feature complete.
+
+`../businessflow` owns business state, positioning, business model, sales enablement, promotion, and landing requirements. Product code and tests in this repository remain the technical source of truth.
+
+Do not market roadmap items as released. Do not invent pricing, customer evidence, compliance, benchmarks, or release dates.
