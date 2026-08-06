@@ -238,10 +238,25 @@ func Load(path string) (Config, error) {
 		return Config{}, fmt.Errorf("parse config: %w", err)
 	}
 
+	applyEnvOverrides(&cfg)
+
 	if err := cfg.Validate(); err != nil {
 		return Config{}, err
 	}
 	return cfg, nil
+}
+
+// applyEnvOverrides lets the control plane (and other orchestrators) inject a
+// per-tenant Postgres DSN without rebuilding the image config file.
+// Precedence: METADATA_CATALOG_DSN, then DATABASE_URL, then yaml (with env:/$ refs).
+func applyEnvOverrides(cfg *Config) {
+	if v := strings.TrimSpace(os.Getenv("METADATA_CATALOG_DSN")); v != "" {
+		cfg.Metadata.DSN = v
+	} else if v := strings.TrimSpace(os.Getenv("DATABASE_URL")); v != "" {
+		cfg.Metadata.DSN = v
+	} else {
+		cfg.Metadata.DSN = resolveSecret(cfg.Metadata.DSN)
+	}
 }
 
 func (c *Config) Validate() error {

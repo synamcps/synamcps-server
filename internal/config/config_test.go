@@ -1,10 +1,51 @@
 package config_test
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/synamcps/synamcps-server/internal/config"
 )
+
+func TestLoadOverridesMetadataDSNFromEnv(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	content := `
+server:
+  listen_addr: ":8080"
+chunking:
+  chunk_size: 100
+  overlap: 10
+summarization:
+  model: "sum"
+embedding:
+  model: "emb"
+metadata_catalog:
+  dsn: "postgres://postgres:postgres@postgres:5432/syna?sslmode=disable"
+api:
+  allowed_origins:
+    - "http://localhost:8080"
+oauth:
+  providers:
+    - name: keycloak
+      issuer: "https://issuer"
+      audience: "aud"
+      jwks_url: "https://issuer/certs"
+`
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("METADATA_CATALOG_DSN", "postgres://tenant:secret@157.90.119.254:5432/my_slug?sslmode=disable")
+	cfg, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	want := "postgres://tenant:secret@157.90.119.254:5432/my_slug?sslmode=disable"
+	if cfg.Metadata.DSN != want {
+		t.Fatalf("Metadata.DSN = %q, want %q", cfg.Metadata.DSN, want)
+	}
+}
 
 func TestValidateAppliesPoolDefaults(t *testing.T) {
 	cfg := config.Config{

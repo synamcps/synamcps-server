@@ -72,6 +72,7 @@ vector_backend:
 
 metadata_catalog:
   driver: "postgres"
+  # Overridable at runtime via METADATA_CATALOG_DSN or DATABASE_URL (control plane).
   dsn: "postgres://postgres:postgres@postgres:5432/syna?sslmode=disable"
   pool_max_conns: 20
   pool_min_conns: 2
