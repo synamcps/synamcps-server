@@ -182,6 +182,7 @@ export SYNA_BASE_URL=http://localhost:8080
 export SYNA_TOKEN=<jwt-or-admin-token>
 ```
 
+
 Examples:
 
 - `scripts/examples/mcp-token-lifecycle.sh`: create, narrow, and revoke a token via MCP admin tools.
