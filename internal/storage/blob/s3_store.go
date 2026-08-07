@@ -19,12 +19,14 @@ type Store struct {
 	blobs  map[string][]byte
 	s3     *minio.Client
 	bucket string
+	prefix string
 }
 
 func NewStore(cfg config.Config) (*Store, error) {
 	s := &Store{
 		blobs:  map[string][]byte{},
 		bucket: cfg.S3.Bucket,
+		prefix: normalizeKeyPrefix(cfg.S3.KeyPrefix),
 	}
 	if cfg.S3.Endpoint == "" {
 		return s, nil
@@ -44,7 +46,24 @@ func NewStore(cfg config.Config) (*Store, error) {
 	return s, nil
 }
 
+func normalizeKeyPrefix(prefix string) string {
+	prefix = strings.TrimSpace(prefix)
+	if prefix == "" {
+		return ""
+	}
+	return strings.TrimRight(prefix, "/") + "/"
+}
+
+func (s *Store) objectKey(key string) string {
+	key = strings.TrimLeft(key, "/")
+	if s.prefix == "" {
+		return key
+	}
+	return s.prefix + key
+}
+
 func (s *Store) Put(_ context.Context, key string, payload []byte) error {
+	key = s.objectKey(key)
 	if s.s3 != nil {
 		_, err := s.s3.PutObject(context.Background(), s.bucket, key, bytes.NewReader(payload), int64(len(payload)), minio.PutObjectOptions{})
 		return err
@@ -56,6 +75,7 @@ func (s *Store) Put(_ context.Context, key string, payload []byte) error {
 }
 
 func (s *Store) Get(_ context.Context, key string) ([]byte, bool, error) {
+	key = s.objectKey(key)
 	if s.s3 != nil {
 		obj, err := s.s3.GetObject(context.Background(), s.bucket, key, minio.GetObjectOptions{})
 		if err != nil {

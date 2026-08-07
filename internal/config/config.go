@@ -120,6 +120,9 @@ type RedisConfig struct {
 type S3Config struct {
 	Endpoint        string `yaml:"endpoint"`
 	Bucket          string `yaml:"bucket"`
+	// KeyPrefix is prepended to every object key (e.g. "myserver/" when many
+	// tenants share one bucket). Trailing slash is normalized at use sites.
+	KeyPrefix       string `yaml:"key_prefix"`
 	LargeDocBytes   int64  `yaml:"large_document_threshold_bytes"`
 	AccessKeyEnvRef string `yaml:"access_key_env_ref"`
 	SecretKeyEnvRef string `yaml:"secret_key_env_ref"`
@@ -246,9 +249,10 @@ func Load(path string) (Config, error) {
 	return cfg, nil
 }
 
-// applyEnvOverrides lets the control plane (and other orchestrators) inject a
-// per-tenant Postgres DSN without rebuilding the image config file.
-// Precedence: METADATA_CATALOG_DSN, then DATABASE_URL, then yaml (with env:/$ refs).
+// applyEnvOverrides lets the control plane (and other orchestrators) inject
+// runtime settings without rebuilding the image config file.
+// Precedence for DSN: METADATA_CATALOG_DSN, then DATABASE_URL, then yaml.
+// S3_* env vars override yaml when present (S3_ENDPOINT may be "" to disable).
 func applyEnvOverrides(cfg *Config) {
 	if v := strings.TrimSpace(os.Getenv("METADATA_CATALOG_DSN")); v != "" {
 		cfg.Metadata.DSN = v
@@ -256,6 +260,34 @@ func applyEnvOverrides(cfg *Config) {
 		cfg.Metadata.DSN = v
 	} else {
 		cfg.Metadata.DSN = resolveSecret(cfg.Metadata.DSN)
+	}
+
+	if _, ok := os.LookupEnv("S3_ENDPOINT"); ok {
+		cfg.S3.Endpoint = strings.TrimSpace(os.Getenv("S3_ENDPOINT"))
+	}
+	if v := strings.TrimSpace(os.Getenv("S3_BUCKET")); v != "" {
+		cfg.S3.Bucket = v
+	}
+	if _, ok := os.LookupEnv("S3_KEY_PREFIX"); ok {
+		cfg.S3.KeyPrefix = strings.TrimSpace(os.Getenv("S3_KEY_PREFIX"))
+	}
+	if v := strings.TrimSpace(os.Getenv("S3_USE_SSL")); v != "" {
+		cfg.S3.UseSSL = parseEnvBool(v)
+	}
+	if v := strings.TrimSpace(os.Getenv("S3_ACCESS_KEY")); v != "" {
+		cfg.S3.AccessKeyEnvRef = "env:S3_ACCESS_KEY"
+	}
+	if v := strings.TrimSpace(os.Getenv("S3_SECRET_KEY")); v != "" {
+		cfg.S3.SecretKeyEnvRef = "env:S3_SECRET_KEY"
+	}
+}
+
+func parseEnvBool(v string) bool {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
 	}
 }
 
