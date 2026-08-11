@@ -52,8 +52,7 @@ func (s *Server) HandleInitialize(ctx context.Context, w http.ResponseWriter, p 
 	sess := s.sessions.CreateMCPSession(p, 12*time.Hour)
 	w.Header().Set("Mcp-Session-Id", sess.SessionID)
 	w.Header().Set("Content-Type", "application/json")
-	accessCtx, _ := auth.AccessContextFromContext(ctx)
-	_ = json.NewEncoder(w).Encode(NewResultResponse(id, s.initializeResult(ctx, p, accessCtx, "2024-11-05", sess.SessionID)))
+	_ = json.NewEncoder(w).Encode(NewResultResponse(id, s.initializeResult(supportedProtocolVersions[0], sess.SessionID)))
 }
 
 func (s *Server) HandleJSONRPC(ctx context.Context, p models.Principal, request map[string]any) (map[string]any, error) {
@@ -140,13 +139,10 @@ func (s *Server) dispatch(ctx context.Context, p models.Principal, accessCtx mod
 	switch method {
 	case "initialize":
 		sess := s.sessions.CreateMCPSession(p, 12*time.Hour)
-		protocolVersion := strutil.AsString(params["protocolVersion"])
-		if protocolVersion == "" {
-			protocolVersion = "2024-11-05"
-		}
-		return s.initializeResult(ctx, p, accessCtx, protocolVersion, sess.SessionID), nil
+		protocolVersion := negotiateProtocolVersion(strutil.AsString(params["protocolVersion"]))
+		return s.initializeResult(protocolVersion, sess.SessionID), nil
 	case "notifications/initialized":
-		return map[string]any{}, nil
+		return nil, nil
 	case "tools/list":
 		result, err := s.handleToolsList(ctx, p, accessCtx)
 		if err != nil {
@@ -327,23 +323,15 @@ func toolCallResult(result any) map[string]any {
 	}
 }
 
-func (s *Server) initializeResult(ctx context.Context, p models.Principal, accessCtx models.APIAccessContext, protocolVersion, sessionID string) map[string]any {
-	caps := map[string]any{
-		"tools": map[string]any{},
-	}
-	exposed, _ := s.exposedProxy(ctx, p, accessCtx)
-	if s.proxy != nil {
-		for k, v := range s.proxy.CapabilityFlags(exposed) {
-			caps[k] = v
-		}
-	}
-	knowledgeTools, _, _ := s.buildKnowledgeTools(ctx, p, accessCtx)
-	if len(knowledgeTools) > 0 {
-		caps["tools"] = map[string]any{}
-	}
+func (s *Server) initializeResult(protocolVersion, sessionID string) map[string]any {
+	// Keep initialize cheap and schema-compatible with Claude Connectors.
+	// sessionId is used only to populate the Mcp-Session-Id response header and
+	// is stripped before the JSON body is written.
 	return map[string]any{
 		"protocolVersion": protocolVersion,
-		"capabilities":    caps,
+		"capabilities": map[string]any{
+			"tools": map[string]any{"listChanged": false},
+		},
 		"serverInfo": map[string]any{
 			"name":    "syna-knowledge-mcp",
 			"version": "0.2.0",
@@ -352,8 +340,28 @@ func (s *Server) initializeResult(ctx context.Context, p models.Principal, acces
 	}
 }
 
+// supportedProtocolVersions is newest-first. Claude.ai currently requests
+// 2025-11-25; we negotiate to the newest version we intentionally support.
+var supportedProtocolVersions = []string{
+	"2025-06-18",
+	"2025-03-26",
+	"2024-11-05",
+}
+
+func negotiateProtocolVersion(requested string) string {
+	if requested == "" {
+		return supportedProtocolVersions[0]
+	}
+	for _, v := range supportedProtocolVersions {
+		if v == requested {
+			return v
+		}
+	}
+	return supportedProtocolVersions[0]
+}
+
 func (s *Server) handleToolsList(ctx context.Context, p models.Principal, accessCtx models.APIAccessContext) (map[string]any, error) {
-	tools, storages, err := s.buildKnowledgeTools(ctx, p, accessCtx)
+	tools, _, err := s.buildKnowledgeTools(ctx, p, accessCtx)
 	if err != nil {
 		return nil, err
 	}
@@ -367,11 +375,8 @@ func (s *Server) handleToolsList(ctx context.Context, p models.Principal, access
 		return nil, err
 	}
 	tools = append(tools, adminTools...)
-	result := map[string]any{"tools": tools}
-	if len(storages) > 0 {
-		result["storages"] = storages
-	}
-	return result, nil
+	// Strict MCP clients (Claude Connectors) validate tools/list as {tools:[...]}.
+	return map[string]any{"tools": tools}, nil
 }
 
 func (s *Server) handleResourcesList(ctx context.Context, p models.Principal, accessCtx models.APIAccessContext) (map[string]any, error) {

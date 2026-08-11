@@ -38,7 +38,10 @@ func (r *JSONRPCRequest) UnmarshalJSON(data []byte) error {
 }
 
 func (r JSONRPCRequest) IsNotification() bool {
-	return len(r.ID) == 0
+	if len(r.ID) == 0 {
+		return true
+	}
+	return string(r.ID) == "null"
 }
 
 type JSONRPCResponse struct {

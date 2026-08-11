@@ -51,6 +51,9 @@ func (h *Handler) post(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, mcp.NewErrorResponse(nil, -32700, "parse error"), http.StatusBadRequest)
 		return
 	}
+	if method := peekJSONRPCMethod(raw); method != "" {
+		w.Header().Set("X-MCP-Method", method)
+	}
 	responses, status := h.handleJSONRPCPayload(w, r, p, raw)
 	if len(responses) == 0 {
 		w.WriteHeader(http.StatusAccepted)
@@ -172,8 +175,10 @@ func (h *Handler) handleOne(w http.ResponseWriter, r *http.Request, p models.Pri
 		if result, ok := resp.Result.(map[string]any); ok {
 			if sessionID, _ := result["sessionId"].(string); sessionID != "" {
 				// MCP clients expect the streamable HTTP session id in this header.
-				// The result keeps sessionId for compatibility with older clients.
+				// Do not leave sessionId in the JSON body — Claude Connectors validate
+				// InitializeResult strictly and reject unknown fields.
 				w.Header().Set("Mcp-Session-Id", sessionID)
+				delete(result, "sessionId")
 			}
 		}
 	}
@@ -207,6 +212,20 @@ func accepts(r *http.Request, want string) bool {
 		}
 	}
 	return false
+}
+
+func peekJSONRPCMethod(raw []byte) string {
+	trimmed := strings.TrimSpace(string(raw))
+	if trimmed == "" || strings.HasPrefix(trimmed, "[") {
+		return ""
+	}
+	var probe struct {
+		Method string `json:"method"`
+	}
+	if err := json.Unmarshal(raw, &probe); err != nil {
+		return ""
+	}
+	return probe.Method
 }
 
 func responsesPayload(raw []byte, responses []mcp.JSONRPCResponse) any {

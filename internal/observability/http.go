@@ -46,14 +46,18 @@ func (m *HTTPMetrics) Middleware(logger *slog.Logger, next http.Handler) http.Ha
 			if rec.status >= 500 {
 				atomic.AddUint64(&m.errorsTotal, 1)
 			}
-			logger.Info("http_request",
+			attrs := []any{
 				"request_id", reqID,
 				"method", r.Method,
 				"path", r.URL.Path,
 				"status", rec.status,
 				"duration_ms", time.Since(start).Milliseconds(),
 				"remote_addr", r.RemoteAddr,
-			)
+			}
+			if mcpMethod := rec.Header().Get("X-MCP-Method"); mcpMethod != "" {
+				attrs = append(attrs, "mcp_method", mcpMethod)
+			}
+			logger.Info("http_request", attrs...)
 		}()
 
 		next.ServeHTTP(rec, r)
