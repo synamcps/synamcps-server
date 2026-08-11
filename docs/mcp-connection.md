@@ -102,3 +102,7 @@ Common tools:
 - `404` on `/mcp` stream: expired or unknown session ID
 - `429`: per-token rate limit exceeded
 - Claude Desktop OAuth fails on localhost: remote connectors require a public HTTPS Syna URL
+- “Couldn’t register with … sign-in service”: almost always bad discovery metadata. Verify:
+  1. `curl -sS https://<host>/.well-known/oauth-authorization-server` shows `issuer` / `registration_endpoint` on the **same public HTTPS host**, not `http://localhost:8080`
+  2. Production config sets `oauth_as.public_base_url` (or `server.public_base_url`) to that HTTPS origin
+  3. Cloudflare/WAF is not blocking Anthropic egress or `python-httpx` / `Claude-User` on `/oauth/register`

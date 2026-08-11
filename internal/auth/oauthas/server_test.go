@@ -22,6 +22,43 @@ import (
 	"github.com/synamcps/synamcps-server/internal/transport/streamablehttp"
 )
 
+func TestMetadataUsesRequestHostWhenConfigIsLoopback(t *testing.T) {
+	srv := NewServer(Deps{
+		Config: config.OAuthASConfig{Enabled: true, PublicBaseURL: "http://localhost:8080"},
+		Store:  NewInMemoryStore(),
+	})
+	mux := http.NewServeMux()
+	srv.Register(mux)
+
+	req := httptest.NewRequest(http.MethodGet, "/.well-known/oauth-authorization-server", nil)
+	req.Host = "ares.synamcps.net"
+	req.Header.Set("X-Forwarded-Proto", "https")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d", rec.Code)
+	}
+	var meta map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &meta); err != nil {
+		t.Fatal(err)
+	}
+	if meta["issuer"] != "https://ares.synamcps.net" {
+		t.Fatalf("issuer=%v", meta["issuer"])
+	}
+	if meta["registration_endpoint"] != "https://ares.synamcps.net/oauth/register" {
+		t.Fatalf("registration_endpoint=%v", meta["registration_endpoint"])
+	}
+
+	prmReq := httptest.NewRequest(http.MethodGet, "/.well-known/oauth-protected-resource/mcp", nil)
+	prmReq.Host = "ares.synamcps.net"
+	prmReq.Header.Set("X-Forwarded-Proto", "https")
+	prmRec := httptest.NewRecorder()
+	mux.ServeHTTP(prmRec, prmReq)
+	if prmRec.Code != http.StatusOK {
+		t.Fatalf("prm status=%d body=%s", prmRec.Code, prmRec.Body.String())
+	}
+}
+
 func TestAuthorizationServerMetadataShape(t *testing.T) {
 	srv := NewServer(Deps{
 		Config: config.OAuthASConfig{Enabled: true, PublicBaseURL: "https://syna.example"},
@@ -140,7 +177,7 @@ func TestDCRAndTokenExchangeFlow(t *testing.T) {
 	loginReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	loginRec := httptest.NewRecorder()
 	mux.ServeHTTP(loginRec, loginReq)
-	if loginRec.Code != http.StatusFound {
+	if loginRec.Code != http.StatusSeeOther {
 		t.Fatalf("login status=%d body=%s", loginRec.Code, loginRec.Body.String())
 	}
 	loc := loginRec.Header().Get("Location")
@@ -211,7 +248,7 @@ func TestDCRAndTokenExchangeFlow(t *testing.T) {
 
 	// MCP initialize with minted token.
 	gateway := auth.NewGateway(auth.GatewayConfig{
-		ResourceMetadataURL: "http://localhost:8080/.well-known/oauth-protected-resource",
+		ResourceMetadataURL: "https://ares.synamcps.net/.well-known/oauth-protected-resource",
 	})
 	gateway.SetOpaqueTokenResolver(accessSvc)
 	sessions := session.NewStore(config.RedisConfig{TTLHours: 1})
@@ -228,7 +265,7 @@ func TestDCRAndTokenExchangeFlow(t *testing.T) {
 		t.Fatalf("unauth status=%d", unauthRec.Code)
 	}
 	www := unauthRec.Header().Get("WWW-Authenticate")
-	wantMeta := "resource" + `_metadata="http://localhost:8080/.well-known/oauth-protected-resource"`
+	wantMeta := "resource" + `_metadata="https://ares.synamcps.net/.well-known/oauth-protected-resource"`
 	if !strings.Contains(www, wantMeta) {
 		t.Fatalf("WWW-Authenticate=%q", www)
 	}

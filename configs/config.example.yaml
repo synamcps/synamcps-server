@@ -36,6 +36,7 @@ oauth:
 
 oauth_as:
   enabled: true
+  # Production: set to the public HTTPS origin (e.g. https://<something>.synamcps.net). Localhost breaks Claude Connectors DCR.
   public_base_url: "http://localhost:8080"
   authorization_code_ttl_seconds: 300
   access_token_ttl_hours: 24

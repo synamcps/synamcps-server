@@ -29,6 +29,7 @@ server:
 
 oauth_as:
   enabled: true
+  # MUST be the public HTTPS origin for Claude Connectors (not localhost in production).
   public_base_url: "https://syna.example.com"  # optional; falls back to server.public_base_url
   authorization_code_ttl_seconds: 300
   access_token_ttl_hours: 24
@@ -57,6 +58,19 @@ Login options on `/oauth/authorize`:
 - Configured OIDC providers that have `client_id` set
 
 Claude Desktop remote connectors require a public HTTPS Syna URL.
+
+**Required for production:** set `server.public_base_url` and/or `oauth_as.public_base_url`
+to the public HTTPS origin clients use (example: `https://ares.synamcps.net`). If this stays
+`http://localhost:8080`, OAuth metadata advertises localhost and Claude fails with
+“Couldn’t register with … sign-in service” because Anthropic cloud cannot reach localhost.
+
+When the configured base URL is loopback, SynaMCPs falls back to `X-Forwarded-Proto` /
+`X-Forwarded-Host` / `Host` for metadata and `WWW-Authenticate`, but you should still set
+the public URL explicitly.
+
+Also allow Anthropic egress (`160.79.104.0/21`) and user agents such as `Claude-User` /
+`python-httpx` through Cloudflare Bot Fight Mode / WAF for `/mcp`, `/oauth/*`, `/register`,
+and `/.well-known/*`.
 
 ## Development: unsigned JWT (`jwks_url: insecure`)
 

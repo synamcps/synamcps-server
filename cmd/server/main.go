@@ -53,6 +53,7 @@ func main() {
 		log.Fatalf("load config: %v", err)
 	}
 	warnInsecureJWKS(cfg)
+	warnOAuthASPublicURL(cfg)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -306,6 +307,15 @@ func warnInsecureJWKS(cfg config.Config) {
 	}
 }
 
+func warnOAuthASPublicURL(cfg config.Config) {
+	if !cfg.OAuthAS.Enabled {
+		return
+	}
+	if auth.IsLoopbackPublicURL(cfg.OAuthAS.PublicBaseURL) {
+		log.Printf("WARNING: oauth_as.public_base_url=%q is loopback; Claude Desktop/Connectors cannot register against localhost. Set server.public_base_url / oauth_as.public_base_url to your public HTTPS origin (e.g. https://ares.synamcps.net). Metadata will fall back to X-Forwarded-Proto/Host when present.", cfg.OAuthAS.PublicBaseURL)
+	}
+}
+
 func buildAuthMethods(cfg config.Config) []string {
 	out := make([]string, 0, len(cfg.OAuth.Providers)+2)
 	for _, p := range cfg.OAuth.Providers {
@@ -346,6 +356,7 @@ func withMiddlewares(next http.Handler, cfg config.Config) http.Handler {
 
 func isWebRoute(path string) bool {
 	return path == "/" || path == "/login" || path == "/logout" ||
+		path == "/register" || path == "/authorize" || path == "/token" ||
 		strings.HasPrefix(path, "/app") || strings.HasPrefix(path, "/admin") ||
 		strings.HasPrefix(path, "/oauth") || strings.HasPrefix(path, "/.well-known/")
 }

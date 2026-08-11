@@ -59,6 +59,7 @@ func NewServer(deps Deps) *Server {
 
 func (s *Server) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /.well-known/oauth-protected-resource", s.protectedResourceMetadata)
+	mux.HandleFunc("GET /.well-known/oauth-protected-resource/{path...}", s.protectedResourceMetadata)
 	mux.HandleFunc("GET /.well-known/oauth-authorization-server", s.authorizationServerMetadata)
 	mux.HandleFunc("POST /oauth/register", s.register)
 	mux.HandleFunc("GET /oauth/authorize", s.authorize)
@@ -66,31 +67,35 @@ func (s *Server) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /oauth/authorize/oidc", s.authorizeOIDCStart)
 	mux.HandleFunc("GET /oauth/callback", s.oidcCallback)
 	mux.HandleFunc("POST /oauth/token", s.token)
+	// Claude.ai may fall back to origin-root OAuth paths when discovery is incomplete.
+	mux.HandleFunc("POST /register", s.register)
+	mux.HandleFunc("GET /authorize", s.authorize)
+	mux.HandleFunc("POST /token", s.token)
 }
 
-func (s *Server) Issuer() string {
-	return strings.TrimRight(s.cfg.PublicBaseURL, "/")
+func (s *Server) Issuer(r *http.Request) string {
+	return auth.ResolvePublicBaseURL(s.cfg.PublicBaseURL, r)
 }
 
-func (s *Server) ResourceMetadataURL() string {
-	return s.Issuer() + "/.well-known/oauth-protected-resource"
+func (s *Server) ResourceMetadataURL(r *http.Request) string {
+	return s.Issuer(r) + "/.well-known/oauth-protected-resource"
 }
 
-func (s *Server) MCPResourceURL() string {
-	return s.Issuer() + "/mcp"
+func (s *Server) MCPResourceURL(r *http.Request) string {
+	return s.Issuer(r) + "/mcp"
 }
 
 func (s *Server) protectedResourceMetadata(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{
-		"resource":                 s.MCPResourceURL(),
-		"authorization_servers":    []string{s.Issuer()},
+		"resource":                 s.MCPResourceURL(r),
+		"authorization_servers":    []string{s.Issuer(r)},
 		"scopes_supported":         []string{"openid", "mcp", "knowledge.read", "knowledge.write", "knowledge.search", "knowledge.delete"},
 		"bearer_methods_supported": []string{"header"},
 	}, http.StatusOK)
 }
 
 func (s *Server) authorizationServerMetadata(w http.ResponseWriter, r *http.Request) {
-	issuer := s.Issuer()
+	issuer := s.Issuer(r)
 	writeJSON(w, map[string]any{
 		"issuer":                                issuer,
 		"authorization_endpoint":                issuer + "/oauth/authorize",
@@ -329,7 +334,7 @@ func (s *Server) authorizeOIDCStart(w http.ResponseWriter, r *http.Request) {
 	q := url.Values{}
 	q.Set("response_type", "code")
 	q.Set("client_id", provider.ClientID)
-	q.Set("redirect_uri", s.Issuer()+"/oauth/callback")
+	q.Set("redirect_uri", s.Issuer(r)+"/oauth/callback")
 	q.Set("scope", "openid email profile")
 	q.Set("state", sess.ID)
 	http.Redirect(w, r, authURL+"?"+q.Encode(), http.StatusFound)
@@ -352,7 +357,7 @@ func (s *Server) oidcCallback(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unknown provider", http.StatusBadRequest)
 		return
 	}
-	rawIDToken, err := s.exchangeOIDCCode(r.Context(), provider, code)
+	rawIDToken, err := s.exchangeOIDCCode(r.Context(), provider, code, s.Issuer(r)+"/oauth/callback")
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -370,12 +375,12 @@ func (s *Server) oidcCallback(w http.ResponseWriter, r *http.Request) {
 	s.completeAuthorize(w, r, sess, principal)
 }
 
-func (s *Server) exchangeOIDCCode(ctx context.Context, provider config.ProviderConfig, code string) (string, error) {
+func (s *Server) exchangeOIDCCode(ctx context.Context, provider config.ProviderConfig, code, redirectURI string) (string, error) {
 	_, tokenURL := oidcEndpoints(provider)
 	form := url.Values{}
 	form.Set("grant_type", "authorization_code")
 	form.Set("code", code)
-	form.Set("redirect_uri", s.Issuer()+"/oauth/callback")
+	form.Set("redirect_uri", redirectURI)
 	form.Set("client_id", provider.ClientID)
 	if secret := provider.ClientSecret(); secret != "" {
 		form.Set("client_secret", secret)
@@ -445,7 +450,7 @@ func (s *Server) completeAuthorize(w http.ResponseWriter, r *http.Request, sess 
 		q.Set("state", sess.State)
 	}
 	redir.RawQuery = q.Encode()
-	http.Redirect(w, r, redir.String(), http.StatusFound)
+	http.Redirect(w, r, redir.String(), http.StatusSeeOther)
 }
 
 func (s *Server) token(w http.ResponseWriter, r *http.Request) {
