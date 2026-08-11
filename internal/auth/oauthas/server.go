@@ -61,6 +61,8 @@ func (s *Server) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /.well-known/oauth-protected-resource", s.protectedResourceMetadata)
 	mux.HandleFunc("GET /.well-known/oauth-protected-resource/{path...}", s.protectedResourceMetadata)
 	mux.HandleFunc("GET /.well-known/oauth-authorization-server", s.authorizationServerMetadata)
+	// Some MCP/OIDC clients probe OpenID discovery instead of RFC 8414.
+	mux.HandleFunc("GET /.well-known/openid-configuration", s.openIDConfiguration)
 	mux.HandleFunc("POST /oauth/register", s.register)
 	mux.HandleFunc("GET /oauth/authorize", s.authorize)
 	mux.HandleFunc("POST /oauth/authorize/login", s.authorizeLogin)
@@ -95,8 +97,20 @@ func (s *Server) protectedResourceMetadata(w http.ResponseWriter, r *http.Reques
 }
 
 func (s *Server) authorizationServerMetadata(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, s.asMetadata(r), http.StatusOK)
+}
+
+func (s *Server) openIDConfiguration(w http.ResponseWriter, r *http.Request) {
+	meta := s.asMetadata(r)
+	// OIDC Discovery extras expected by clients that probe this path.
+	// Syna AS mints opaque access tokens (no local id_token / jwks_uri).
+	meta["subject_types_supported"] = []string{"public"}
+	writeJSON(w, meta, http.StatusOK)
+}
+
+func (s *Server) asMetadata(r *http.Request) map[string]any {
 	issuer := s.Issuer(r)
-	writeJSON(w, map[string]any{
+	return map[string]any{
 		"issuer":                                issuer,
 		"authorization_endpoint":                issuer + "/oauth/authorize",
 		"token_endpoint":                        issuer + "/oauth/token",
@@ -106,7 +120,7 @@ func (s *Server) authorizationServerMetadata(w http.ResponseWriter, r *http.Requ
 		"code_challenge_methods_supported":      []string{"S256"},
 		"token_endpoint_auth_methods_supported": []string{"none", "client_secret_post", "client_secret_basic"},
 		"scopes_supported":                      []string{"openid", "mcp", "knowledge.read", "knowledge.write", "knowledge.search", "knowledge.delete"},
-	}, http.StatusOK)
+	}
 }
 
 func (s *Server) register(w http.ResponseWriter, r *http.Request) {

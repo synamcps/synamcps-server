@@ -103,7 +103,7 @@ Common tools:
 - `429`: per-token rate limit exceeded
 - Claude Desktop OAuth fails on localhost: remote connectors require a public HTTPS Syna URL
 - “Couldn’t register with … sign-in service”: almost always bad discovery metadata. Verify:
-  1. `curl -sS https://<host>/.well-known/oauth-authorization-server` shows `issuer` / `registration_endpoint` on the **same public HTTPS host**, not `http://localhost:8080`
+  1. `curl -sS https://<host>/.well-known/oauth-authorization-server` (and `/.well-known/openid-configuration`) shows `issuer` / `registration_endpoint` on the **same public HTTPS host**, not `http://localhost:8080`
   2. Production config sets `oauth_as.public_base_url` (or `server.public_base_url`) to that HTTPS origin
   3. Cloudflare/WAF is not blocking Anthropic egress or `python-httpx` / `Claude-User` on `/oauth/register`
 - OAuth finishes but Claude shows `McpServerError` / “Connected successfully but … temporary error”: OAuth succeeded; the post-login MCP handshake failed. Check access logs for `mcp_method=initialize` (should be fast, well under 10s) and whether `notifications/initialized` appears as status 202. Repeated `initialize` 200s without `initialized` usually means Claude rejected the InitializeResult shape or timed out.

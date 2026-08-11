@@ -95,6 +95,39 @@ func TestAuthorizationServerMetadataShape(t *testing.T) {
 	}
 }
 
+func TestOpenIDConfiguration(t *testing.T) {
+	srv := NewServer(Deps{
+		Config: config.OAuthASConfig{Enabled: true, PublicBaseURL: "https://ares.synamcps.net"},
+		Store:  NewInMemoryStore(),
+	})
+	mux := http.NewServeMux()
+	srv.Register(mux)
+
+	req := httptest.NewRequest(http.MethodGet, "/.well-known/openid-configuration", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var meta map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &meta); err != nil {
+		t.Fatal(err)
+	}
+	if meta["issuer"] != "https://ares.synamcps.net" {
+		t.Fatalf("issuer=%v", meta["issuer"])
+	}
+	if meta["authorization_endpoint"] != "https://ares.synamcps.net/oauth/authorize" {
+		t.Fatalf("authorization_endpoint=%v", meta["authorization_endpoint"])
+	}
+	if meta["registration_endpoint"] != "https://ares.synamcps.net/oauth/register" {
+		t.Fatalf("registration_endpoint=%v", meta["registration_endpoint"])
+	}
+	subjects, _ := meta["subject_types_supported"].([]any)
+	if len(subjects) != 1 || subjects[0] != "public" {
+		t.Fatalf("subject_types_supported=%v", meta["subject_types_supported"])
+	}
+}
+
 func TestDCRAndTokenExchangeFlow(t *testing.T) {
 	accessStore := access.NewInMemoryStore()
 	accessSvc := access.NewService(accessStore)

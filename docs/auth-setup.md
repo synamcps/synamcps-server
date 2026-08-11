@@ -45,6 +45,7 @@ Endpoints:
 
 - `GET /.well-known/oauth-protected-resource`
 - `GET /.well-known/oauth-authorization-server`
+- `GET /.well-known/openid-configuration` (OIDC discovery alias of the AS metadata)
 - `POST /oauth/register` (dynamic client registration)
 - `GET /oauth/authorize` (+ login / OIDC)
 - `POST /oauth/token` (authorization_code + PKCE S256, refresh_token)
