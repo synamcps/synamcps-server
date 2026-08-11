@@ -5,17 +5,58 @@
 1. Create realm `syna`.
 2. Create client `syna-mcp`.
 3. Configure issuer and audience in `oauth.providers`.
+4. For browser login during MCP OAuth AS authorize, also set `client_id` and `client_secret_env_ref` on that provider.
 
 ## Google
 
 1. Register OAuth client in Google Cloud.
 2. Set provider issuer `https://accounts.google.com`.
 3. Restrict domains in `oauth.google_allowed_domains`.
+4. Set `client_id` / `client_secret_env_ref` if using Google as an authorize login option.
 
 ## Generic OIDC
 
 Add provider entry with `issuer`, `audience`, `jwks_url`.
 Tokens are verified using provider JWKS and strict issuer/audience checks.
+
+## MCP OAuth 2.1 Authorization Server (`oauth_as`)
+
+Enable SynaMCPs as the Authorization Server that Claude Desktop Connectors discover:
+
+```yaml
+server:
+  public_base_url: "https://syna.example.com"
+
+oauth_as:
+  enabled: true
+  public_base_url: "https://syna.example.com"  # optional; falls back to server.public_base_url
+  authorization_code_ttl_seconds: 300
+  access_token_ttl_hours: 24
+  refresh_token_ttl_hours: 720
+  default_token_mode: "read_write"
+  allowed_redirect_uri_patterns:
+    - "http://localhost*"
+    - "http://127.0.0.1*"
+    - "https://*"
+```
+
+Endpoints:
+
+- `GET /.well-known/oauth-protected-resource`
+- `GET /.well-known/oauth-authorization-server`
+- `POST /oauth/register` (dynamic client registration)
+- `GET /oauth/authorize` (+ login / OIDC)
+- `POST /oauth/token` (authorization_code + PKCE S256, refresh_token)
+- `GET /oauth/callback` (IdP callback)
+
+Successful token exchange mints a normal Syna opaque access token bound to the logged-in user (readable storages, `default_token_mode`). `/mcp` validation is unchanged.
+
+Login options on `/oauth/authorize`:
+
+- Internal username/password (`web.default_admin` and access users)
+- Configured OIDC providers that have `client_id` set
+
+Claude Desktop remote connectors require a public HTTPS Syna URL.
 
 ## Development: unsigned JWT (`jwks_url: insecure`)
 

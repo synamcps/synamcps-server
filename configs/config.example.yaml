@@ -1,5 +1,6 @@
 server:
   listen_addr: ":8080"
+  public_base_url: "http://localhost:8080"
   dev_mode: false
 
 transport:
@@ -22,12 +23,28 @@ oauth:
       issuer: "https://keycloak.local/realms/syna"
       audience: "syna-mcp"
       jwks_url: "https://keycloak.local/realms/syna/protocol/openid-connect/certs"
+      client_id: ""
+      client_secret_env_ref: ""
     - name: google
       issuer: "https://accounts.google.com"
       audience: "syna-mcp"
       jwks_url: "https://www.googleapis.com/oauth2/v3/certs"
+      client_id: ""
+      client_secret_env_ref: ""
   google_allowed_domains:
     - "example.com"
+
+oauth_as:
+  enabled: true
+  public_base_url: "http://localhost:8080"
+  authorization_code_ttl_seconds: 300
+  access_token_ttl_hours: 24
+  refresh_token_ttl_hours: 720
+  default_token_mode: "read_write"
+  allowed_redirect_uri_patterns:
+    - "http://localhost*"
+    - "http://127.0.0.1*"
+    - "https://*"
 
 teleport:
   enabled: true

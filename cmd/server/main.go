@@ -18,6 +18,7 @@ import (
 	"github.com/synamcps/synamcps-server/internal/access"
 	"github.com/synamcps/synamcps-server/internal/agent"
 	"github.com/synamcps/synamcps-server/internal/auth"
+	"github.com/synamcps/synamcps-server/internal/auth/oauthas"
 	"github.com/synamcps/synamcps-server/internal/config"
 	"github.com/synamcps/synamcps-server/internal/httpapi"
 	"github.com/synamcps/synamcps-server/internal/knowledge"
@@ -57,11 +58,16 @@ func main() {
 	defer cancel()
 
 	sessions := session.NewStore(cfg.Redis)
+	resourceMetadataURL := ""
+	if cfg.OAuthAS.Enabled {
+		resourceMetadataURL = strings.TrimRight(cfg.OAuthAS.PublicBaseURL, "/") + "/.well-known/oauth-protected-resource"
+	}
 	gateway := auth.NewGateway(auth.GatewayConfig{
-		OAuth:     cfg.OAuth,
-		Teleport:  cfg.Teleport,
-		APIScopes: cfg.API.Scopes,
-		DevMode:   cfg.Server.DevMode,
+		OAuth:               cfg.OAuth,
+		Teleport:            cfg.Teleport,
+		APIScopes:           cfg.API.Scopes,
+		DevMode:             cfg.Server.DevMode,
+		ResourceMetadataURL: resourceMetadataURL,
 	})
 
 	var pgPool *pgxpool.Pool
@@ -180,6 +186,8 @@ func main() {
 		MCPAccess:             mcpAccess,
 		Agent:                 agentService,
 		MaxBodyBytes:          cfg.Limits.MaxUploadBytes,
+		OAuthASEnabled:        cfg.OAuthAS.Enabled,
+		PublicBaseURL:         cfg.OAuthAS.PublicBaseURL,
 	})
 	rootMux.Handle("/api/", apiRouter)
 	rootMux.HandleFunc("/api/capabilities", func(w http.ResponseWriter, r *http.Request) {
@@ -192,8 +200,21 @@ func main() {
 			"auth_methods": buildAuthMethods(cfg),
 		})
 	})
-	rootMux.Handle("/.well-known/oauth-protected-resource", gateway.ProtectedResourceMetadataHandler())
-	rootMux.Handle("/.well-known/oauth-authorization-server", gateway.AuthorizationServerMetadataHandler())
+	if cfg.OAuthAS.Enabled {
+		oauthAS := oauthas.NewServer(oauthas.Deps{
+			Config:   cfg.OAuthAS,
+			OAuth:    cfg.OAuth,
+			Web:      cfg.Web,
+			Store:    oauthas.NewStore(pgPool),
+			Access:   accessService,
+			Router:   gateway.ProviderRouter(),
+			S3Bucket: cfg.S3.Bucket,
+		})
+		oauthAS.Register(rootMux)
+	} else {
+		rootMux.Handle("/.well-known/oauth-protected-resource", gateway.ProtectedResourceMetadataHandler())
+		rootMux.Handle("/.well-known/oauth-authorization-server", gateway.AuthorizationServerMetadataHandler())
+	}
 
 	if cfg.Web.EnableUI {
 		rootMux.Handle("/", web.NewHandler(cfg, sessions, accessService))
@@ -286,12 +307,15 @@ func warnInsecureJWKS(cfg config.Config) {
 }
 
 func buildAuthMethods(cfg config.Config) []string {
-	out := make([]string, 0, len(cfg.OAuth.Providers)+1)
+	out := make([]string, 0, len(cfg.OAuth.Providers)+2)
 	for _, p := range cfg.OAuth.Providers {
 		out = append(out, p.Name)
 	}
 	if cfg.Teleport.Enabled {
 		out = append(out, "teleport_proxy")
+	}
+	if cfg.OAuthAS.Enabled {
+		out = append(out, "oauth_as")
 	}
 	return out
 }
@@ -308,7 +332,7 @@ func withMiddlewares(next http.Handler, cfg config.Config) http.Handler {
 			w.Header().Set("Vary", "Origin")
 		}
 		w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, Mcp-Session-Id")
-		w.Header().Set("Access-Control-Expose-Headers", "Mcp-Session-Id")
+		w.Header().Set("Access-Control-Expose-Headers", "Mcp-Session-Id, WWW-Authenticate")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-Frame-Options", "DENY")
 		w.Header().Set("Referrer-Policy", "no-referrer")
@@ -321,7 +345,9 @@ func withMiddlewares(next http.Handler, cfg config.Config) http.Handler {
 }
 
 func isWebRoute(path string) bool {
-	return path == "/" || path == "/login" || path == "/logout" || strings.HasPrefix(path, "/app") || strings.HasPrefix(path, "/admin")
+	return path == "/" || path == "/login" || path == "/logout" ||
+		strings.HasPrefix(path, "/app") || strings.HasPrefix(path, "/admin") ||
+		strings.HasPrefix(path, "/oauth") || strings.HasPrefix(path, "/.well-known/")
 }
 
 func isAllowedOrigin(origin, host string, allowlist []string) bool {

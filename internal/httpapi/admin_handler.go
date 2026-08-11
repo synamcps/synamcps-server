@@ -17,12 +17,14 @@ import (
 const ensurePrincipalTTL = 5 * time.Minute
 
 type AdminHandler struct {
-	access     *access.Service
-	usage      *usage.Service
-	s3Bucket   string
-	mcpStore   *mcpproxy.Store
-	mcpManager *mcpproxy.Manager
-	mcpAccess  *mcpproxy.AccessService
+	access         *access.Service
+	usage          *usage.Service
+	s3Bucket       string
+	mcpStore       *mcpproxy.Store
+	mcpManager     *mcpproxy.Manager
+	mcpAccess      *mcpproxy.AccessService
+	oauthASEnabled bool
+	publicBaseURL  string
 
 	ensuredMu sync.Mutex
 	ensured   map[string]time.Time
@@ -50,6 +52,11 @@ func (h *AdminHandler) AttachMCP(store *mcpproxy.Store, manager *mcpproxy.Manage
 	h.mcpStore = store
 	h.mcpManager = manager
 	h.mcpAccess = mcpAccess
+}
+
+func (h *AdminHandler) SetOAuthAS(enabled bool, publicBaseURL string) {
+	h.oauthASEnabled = enabled
+	h.publicBaseURL = strings.TrimRight(publicBaseURL, "/")
 }
 
 func (h *AdminHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -526,12 +533,12 @@ func (h *AdminHandler) listTokens(w http.ResponseWriter, r *http.Request, p mode
 }
 
 type createTokenRequest struct {
-	Name       string                 `json:"name"`
-	Mode       models.AccessMode      `json:"mode"`
-	StorageIDs []string               `json:"storageIds"`
+	Name       string                        `json:"name"`
+	Mode       models.AccessMode             `json:"mode"`
+	StorageIDs []string                      `json:"storageIds"`
 	MCPServers []models.AccessTokenMCPServer `json:"mcpServers"`
-	RateLimit  models.RateLimitPolicy `json:"rateLimit"`
-	ExpiresAt  *time.Time             `json:"expiresAt,omitempty"`
+	RateLimit  models.RateLimitPolicy        `json:"rateLimit"`
+	ExpiresAt  *time.Time                    `json:"expiresAt,omitempty"`
 }
 
 func (h *AdminHandler) createToken(w http.ResponseWriter, r *http.Request, p models.Principal) {
@@ -670,7 +677,11 @@ func (h *AdminHandler) connectOptions(w http.ResponseWriter, r *http.Request, pa
 	if raw == "" {
 		raw = "<rotate-or-create-token-to-reveal>"
 	}
-	cfg := buildConnectConfig(client, serverBaseURL(r), raw)
+	base := serverBaseURL(r)
+	if h.publicBaseURL != "" {
+		base = h.publicBaseURL
+	}
+	cfg := buildConnectConfig(client, base, raw, h.oauthASEnabled)
 	writeJSON(w, cfg, http.StatusOK)
 }
 
@@ -734,17 +745,19 @@ func serverBaseURL(r *http.Request) string {
 	return scheme + "://" + r.Host
 }
 
-func buildConnectConfig(client models.MCPClientKind, baseURL, rawToken string) models.TokenConnectConfig {
+func buildConnectConfig(client models.MCPClientKind, baseURL, rawToken string, oauthASEnabled bool) models.TokenConnectConfig {
+	baseURL = strings.TrimRight(baseURL, "/")
+	mcpURL := baseURL + "/mcp"
 	body := fmt.Sprintf(`{
   "mcpServers": {
     "syna-knowledge": {
-      "url": "%s/mcp",
+      "url": "%s",
       "headers": {
         "Authorization": "Bearer %s"
       }
     }
   }
-}`, baseURL, rawToken)
+}`, mcpURL, rawToken)
 	file := "mcp.json"
 	instructions := []string{"Add the MCP server configuration.", "Restart MCP tools.", "Run tools/list and verify that only allowed storage tools are visible."}
 	switch client {
@@ -754,6 +767,17 @@ func buildConnectConfig(client models.MCPClientKind, baseURL, rawToken string) m
 	case models.MCPClientClaudeDesktop:
 		file = "claude_desktop_config.json"
 		instructions = []string{"Open Claude Desktop config.", "Add the mcpServers entry.", "Restart Claude Desktop."}
+		if oauthASEnabled {
+			file = "claude-connector.txt"
+			body = mcpURL
+			instructions = []string{
+				"In Claude Desktop, open Settings → Connectors → Add custom connector.",
+				"Paste the SynaMCPs MCP URL (HTTPS required for Anthropic cloud egress).",
+				"Complete the browser login (internal user or configured OIDC provider).",
+				"Do not paste a static bearer token; Claude obtains one via OAuth.",
+				"Legacy fallback: use claude_desktop_config.json with Authorization Bearer if OAuth AS is disabled.",
+			}
+		}
 	case models.MCPClientClaudeCode:
 		file = ".mcp.json"
 		instructions = []string{"Create or update .mcp.json.", "Start Claude Code in the project.", "Verify tools/list output."}

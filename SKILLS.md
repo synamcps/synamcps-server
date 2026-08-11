@@ -25,9 +25,10 @@ Configuration is loaded from `CONFIG_PATH`; Docker Compose uses `/app/configs/co
 
 Key config sections:
 
-- `server`: listen address and `dev_mode`.
+- `server`: listen address, `public_base_url`, and `dev_mode`.
 - `web`: shared login, admin UI, and `web.user_ui.enabled` for the user-facing `/app`.
 - `oauth` / `teleport`: identity providers. See `docs/auth-setup.md`.
+- `oauth_as`: MCP OAuth 2.1 Authorization Server for Claude Desktop Connectors (DCR + PKCE). See `docs/auth-setup.md` and `docs/mcp-connection.md`.
 - `metadata_catalog`: Postgres DSN and pool sizing.
 - `s3`: object storage endpoint, bucket, credentials env refs, and large-document threshold.
 - `vector_backend`: `pgvector` or `qdrant`.
@@ -147,6 +148,12 @@ Streamable HTTP endpoint:
 ```text
 $SYNA_BASE_URL/mcp
 ```
+
+### Claude Desktop Connectors (preferred when `oauth_as.enabled`)
+
+Paste the MCP URL into Claude Desktop Connectors and complete browser login. No static bearer token is required. The host must be public HTTPS for Anthropic cloud egress.
+
+### Static bearer config (Cursor / Claude Code / legacy)
 
 Use a bearer token in the MCP client config:
 

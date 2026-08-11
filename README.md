@@ -118,7 +118,8 @@ Override: `CONFIG_PATH=/path/to/config.yaml`
 Key sections:
 
 - `web.default_admin`: Admin UI username/password (password via env ref)
-- `oauth.providers`: OIDC providers (issuer/audience/jwks_url)
+- `oauth.providers`: OIDC providers (issuer/audience/jwks_url; optional client_id for AS login)
+- `oauth_as`: MCP OAuth 2.1 Authorization Server for Claude Desktop Connectors
 - `teleport`: Teleport Proxy JWT (issuer/audience)
 - `redis`: sessions + usage/time-series (when enabled)
 - `s3`: endpoint/bucket + large document threshold

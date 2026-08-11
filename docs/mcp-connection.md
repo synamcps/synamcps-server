@@ -7,14 +7,33 @@ This server supports:
 
 ## Auth Options
 
-- Keycloak (OIDC/OAuth 2.1)
-- Google OIDC (with optional domain restrictions)
-- Generic OIDC/OAuth 2.1
-- Teleport Proxy JWT
+### Claude Desktop Connectors (OAuth 2.1)
+
+When `oauth_as.enabled` is true, SynaMCPs acts as an OAuth 2.1 Authorization Server for MCP clients:
+
+1. Deploy SynaMCPs on a **public HTTPS** URL (Anthropic cloud egress cannot reach localhost).
+2. In Claude Desktop: Settings → Connectors → Add custom connector.
+3. Paste `https://<host>/mcp` (no bearer token).
+4. Claude discovers OAuth metadata, registers a public client (DCR), and opens a browser login.
+5. Sign in with an internal Syna user/password or a configured OIDC provider (`oauth.providers` with `client_id` / `client_secret_env_ref`).
+6. Claude receives a Syna opaque access token and calls `/mcp` with `Authorization: Bearer …`.
+
+Unauthenticated `/mcp` requests return:
+
+```http
+HTTP/1.1 401 Unauthorized
+WWW-Authenticate: Bearer resource_metadata="https://<host>/.well-known/oauth-protected-resource"
+```
+
+### Static bearer tokens (Cursor / Claude Code / legacy)
+
+- Create a scoped access token in Admin UI or via API.
+- Put `Authorization: Bearer <token>` in the MCP client config.
+- Keycloak / Google / generic OIDC JWTs and Teleport Proxy JWT are still accepted when configured.
 
 ## Streamable HTTP Example
 
-1. Obtain bearer token from configured provider.
+1. Obtain bearer token (OAuth Connectors flow or static access token).
 2. Send initialize request:
 
 ```bash
@@ -78,7 +97,8 @@ Common tools:
 
 ## Troubleshooting
 
-- `401`: missing/invalid token (including on `GET`/`DELETE /mcp`)
+- `401`: missing/invalid token (including on `GET`/`DELETE /mcp`); with OAuth AS enabled, check `WWW-Authenticate` for `resource_metadata`
 - `403`: issuer/audience/scope/policy mismatch, or the session belongs to a different principal
 - `404` on `/mcp` stream: expired or unknown session ID
 - `429`: per-token rate limit exceeded
+- Claude Desktop OAuth fails on localhost: remote connectors require a public HTTPS Syna URL

@@ -26,6 +26,8 @@ type RouterDeps struct {
 	MCPAccess             *mcpproxy.AccessService
 	Agent                 *agent.Service
 	MaxBodyBytes          int64
+	OAuthASEnabled        bool
+	PublicBaseURL         string
 }
 
 func NewRouter(deps RouterDeps) http.Handler {
@@ -36,6 +38,7 @@ func NewRouter(deps RouterDeps) http.Handler {
 	if deps.Access != nil {
 		admin := NewAdminHandler(deps.Access, deps.Usage, deps.S3Bucket)
 		admin.AttachMCP(deps.MCPStore, deps.MCPManager, deps.MCPAccess)
+		admin.SetOAuthAS(deps.OAuthASEnabled, deps.PublicBaseURL)
 		mux.Handle("/api/admin/", authResolver.Middleware(admin))
 		if deps.Status != nil {
 			mux.Handle("GET /api/admin/status", authResolver.Middleware(deps.Status))

@@ -29,10 +29,11 @@ type Gateway struct {
 }
 
 type GatewayConfig struct {
-	OAuth     config.OAuthConfig
-	Teleport  config.TeleportConfig
-	APIScopes []string
-	DevMode   bool
+	OAuth               config.OAuthConfig
+	Teleport            config.TeleportConfig
+	APIScopes           []string
+	DevMode             bool
+	ResourceMetadataURL string
 }
 
 func NewGateway(cfg GatewayConfig) *Gateway {
@@ -43,18 +44,33 @@ func (g *Gateway) SetOpaqueTokenResolver(resolver OpaqueTokenResolver) {
 	g.tokenResolver = resolver
 }
 
+func (g *Gateway) ProviderRouter() *ProviderRouter {
+	return g.router
+}
+
+func (g *Gateway) SetResourceMetadataURL(url string) {
+	g.cfg.ResourceMetadataURL = url
+}
+
+func (g *Gateway) writeUnauthorized(w http.ResponseWriter, msg string) {
+	if g.cfg.ResourceMetadataURL != "" {
+		w.Header().Set("WWW-Authenticate", fmt.Sprintf(`Bearer resource_metadata="%s"`, g.cfg.ResourceMetadataURL))
+	}
+	http.Error(w, msg, http.StatusUnauthorized)
+}
+
 func (g *Gateway) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		bearer := extractBearer(r.Header.Get("Authorization"))
 		if bearer == "" {
-			http.Error(w, "missing bearer token", http.StatusUnauthorized)
+			g.writeUnauthorized(w, "missing bearer token")
 			return
 		}
 
 		if g.tokenResolver != nil {
 			accessCtx, found, err := g.tokenResolver.ResolveBearer(r.Context(), bearer)
 			if err != nil {
-				http.Error(w, err.Error(), http.StatusUnauthorized)
+				g.writeUnauthorized(w, err.Error())
 				return
 			}
 			if found {
@@ -67,7 +83,7 @@ func (g *Gateway) Middleware(next http.Handler) http.Handler {
 
 		claims, err := g.router.VerifyAndParseClaims(r.Context(), bearer)
 		if err != nil {
-			http.Error(w, "invalid token", http.StatusUnauthorized)
+			g.writeUnauthorized(w, "invalid token")
 			return
 		}
 

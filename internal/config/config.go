@@ -18,6 +18,7 @@ type Config struct {
 	Transport     TransportConfig     `yaml:"transport"`
 	Web           WebConfig           `yaml:"web"`
 	OAuth         OAuthConfig         `yaml:"oauth"`
+	OAuthAS       OAuthASConfig       `yaml:"oauth_as"`
 	Teleport      TeleportConfig      `yaml:"teleport"`
 	Redis         RedisConfig         `yaml:"redis"`
 	S3            S3Config            `yaml:"s3"`
@@ -32,6 +33,16 @@ type Config struct {
 	Usage         UsageConfig         `yaml:"usage"`
 	MCPProxy      MCPProxyConfig      `yaml:"mcp_proxy"`
 	Agent         AgentConfig         `yaml:"agent"`
+}
+
+type OAuthASConfig struct {
+	Enabled                     bool     `yaml:"enabled"`
+	PublicBaseURL               string   `yaml:"public_base_url"`
+	AuthorizationCodeTTLSeconds int      `yaml:"authorization_code_ttl_seconds"`
+	AccessTokenTTLHours         int      `yaml:"access_token_ttl_hours"`
+	RefreshTokenTTLHours        int      `yaml:"refresh_token_ttl_hours"`
+	DefaultTokenMode            string   `yaml:"default_token_mode"`
+	AllowedRedirectURIPatterns  []string `yaml:"allowed_redirect_uri_patterns"`
 }
 
 type AgentConfig struct {
@@ -66,8 +77,9 @@ func (c Config) MCPProxySecretsKey() string {
 }
 
 type ServerConfig struct {
-	ListenAddr string `yaml:"listen_addr"`
-	DevMode    bool   `yaml:"dev_mode"`
+	ListenAddr    string `yaml:"listen_addr"`
+	PublicBaseURL string `yaml:"public_base_url"`
+	DevMode       bool   `yaml:"dev_mode"`
 }
 
 type TransportConfig struct {
@@ -98,10 +110,16 @@ type OAuthConfig struct {
 }
 
 type ProviderConfig struct {
-	Name     string `yaml:"name"`
-	Issuer   string `yaml:"issuer"`
-	Audience string `yaml:"audience"`
-	JWKSURL  string `yaml:"jwks_url"`
+	Name               string `yaml:"name"`
+	Issuer             string `yaml:"issuer"`
+	Audience           string `yaml:"audience"`
+	JWKSURL            string `yaml:"jwks_url"`
+	ClientID           string `yaml:"client_id"`
+	ClientSecretEnvRef string `yaml:"client_secret_env_ref"`
+}
+
+func (p ProviderConfig) ClientSecret() string {
+	return resolveSecret(p.ClientSecretEnvRef)
 }
 
 type TeleportConfig struct {
@@ -418,6 +436,34 @@ func (c *Config) Validate() error {
 	}
 	if len(c.Agent.AllowedTools) == 0 {
 		c.Agent.AllowedTools = []string{"knowledge_search", "knowledge_get", "knowledge_save"}
+	}
+	if c.OAuthAS.AuthorizationCodeTTLSeconds <= 0 {
+		c.OAuthAS.AuthorizationCodeTTLSeconds = 300
+	}
+	if c.OAuthAS.AccessTokenTTLHours <= 0 {
+		c.OAuthAS.AccessTokenTTLHours = 24
+	}
+	if c.OAuthAS.RefreshTokenTTLHours <= 0 {
+		c.OAuthAS.RefreshTokenTTLHours = 720
+	}
+	if c.OAuthAS.DefaultTokenMode == "" {
+		c.OAuthAS.DefaultTokenMode = "read_write"
+	}
+	if c.OAuthAS.DefaultTokenMode != "read" && c.OAuthAS.DefaultTokenMode != "read_write" {
+		return fmt.Errorf("oauth_as.default_token_mode must be read or read_write")
+	}
+	if c.OAuthAS.PublicBaseURL == "" {
+		c.OAuthAS.PublicBaseURL = c.Server.PublicBaseURL
+	}
+	if c.OAuthAS.Enabled && c.OAuthAS.PublicBaseURL == "" {
+		return errors.New("oauth_as.enabled requires oauth_as.public_base_url or server.public_base_url")
+	}
+	if len(c.OAuthAS.AllowedRedirectURIPatterns) == 0 {
+		c.OAuthAS.AllowedRedirectURIPatterns = []string{
+			"http://localhost*",
+			"http://127.0.0.1*",
+			"https://*",
+		}
 	}
 	if c.Metadata.DSN == "" {
 		return errors.New("metadata_catalog.dsn is required")

@@ -1,5 +1,6 @@
 server:
   listen_addr: ":8080"
+  public_base_url: "http://localhost:8080"
   dev_mode: true
 
 transport:
@@ -23,7 +24,21 @@ oauth:
       audience: "syna-mcp"
       #jwks_url: "http://localhost:8081/realms/syna/protocol/openid-connect/certs"
       jwks_url: "insecure"
+      client_id: ""
+      client_secret_env_ref: ""
   google_allowed_domains: []
+
+oauth_as:
+  enabled: true
+  public_base_url: "http://localhost:8080"
+  authorization_code_ttl_seconds: 300
+  access_token_ttl_hours: 24
+  refresh_token_ttl_hours: 720
+  default_token_mode: "read_write"
+  allowed_redirect_uri_patterns:
+    - "http://localhost*"
+    - "http://127.0.0.1*"
+    - "https://*"
 
 teleport:
   enabled: false
