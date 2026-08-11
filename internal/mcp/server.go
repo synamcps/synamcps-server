@@ -330,7 +330,10 @@ func (s *Server) initializeResult(protocolVersion, sessionID string) map[string]
 	return map[string]any{
 		"protocolVersion": protocolVersion,
 		"capabilities": map[string]any{
-			"tools": map[string]any{"listChanged": false},
+			"experimental": map[string]any{},
+			"prompts":      map[string]any{"listChanged": false},
+			"resources":    map[string]any{"subscribe": false, "listChanged": false},
+			"tools":        map[string]any{"listChanged": false},
 		},
 		"serverInfo": map[string]any{
 			"name":    "syna-knowledge-mcp",
@@ -340,24 +343,40 @@ func (s *Server) initializeResult(protocolVersion, sessionID string) map[string]
 	}
 }
 
-// supportedProtocolVersions is newest-first. Claude.ai currently requests
-// 2025-11-25; we negotiate to the newest version we intentionally support.
-var supportedProtocolVersions = []string{
-	"2025-06-18",
-	"2025-03-26",
-	"2024-11-05",
-}
+// defaultProtocolVersion is used when the client omits protocolVersion.
+const defaultProtocolVersion = "2025-06-18"
 
 func negotiateProtocolVersion(requested string) string {
 	if requested == "" {
-		return supportedProtocolVersions[0]
+		return defaultProtocolVersion
 	}
-	for _, v := range supportedProtocolVersions {
-		if v == requested {
-			return v
+	// Claude Connectors request 2025-11-25 and require the server to echo that
+	// value. Negotiating down causes the client to abort after HTTP 200 with no
+	// notifications/initialized or tools/list follow-up.
+	if looksLikeProtocolVersion(requested) {
+		return requested
+	}
+	return defaultProtocolVersion
+}
+
+func looksLikeProtocolVersion(v string) bool {
+	if len(v) != 10 {
+		return false
+	}
+	// YYYY-MM-DD
+	for i, c := range v {
+		switch i {
+		case 4, 7:
+			if c != '-' {
+				return false
+			}
+		default:
+			if c < '0' || c > '9' {
+				return false
+			}
 		}
 	}
-	return supportedProtocolVersions[0]
+	return true
 }
 
 func (s *Server) handleToolsList(ctx context.Context, p models.Principal, accessCtx models.APIAccessContext) (map[string]any, error) {

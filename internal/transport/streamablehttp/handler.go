@@ -180,6 +180,9 @@ func (h *Handler) handleOne(w http.ResponseWriter, r *http.Request, p models.Pri
 				w.Header().Set("Mcp-Session-Id", sessionID)
 				delete(result, "sessionId")
 			}
+			if pv, _ := result["protocolVersion"].(string); pv != "" {
+				w.Header().Set("MCP-Protocol-Version", pv)
+			}
 		}
 	}
 	return resp, http.StatusOK
