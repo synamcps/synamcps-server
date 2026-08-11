@@ -310,6 +310,30 @@ func applyEnvOverrides(cfg *Config) {
 		// Example configs set oauth_as.public_base_url to localhost; override both.
 		cfg.OAuthAS.PublicBaseURL = v
 	}
+
+	applyRedisEnvOverrides(&cfg.Redis)
+}
+
+func applyRedisEnvOverrides(r *RedisConfig) {
+	if v := strings.TrimSpace(os.Getenv("REDIS_ADDR")); v != "" {
+		r.Addr = v
+	}
+	if _, ok := os.LookupEnv("REDIS_PASSWORD"); ok {
+		r.Password = os.Getenv("REDIS_PASSWORD")
+	}
+	if v := strings.TrimSpace(os.Getenv("REDIS_DB")); v != "" {
+		if n, err := parseEnvInt(v); err == nil {
+			r.DB = n
+		}
+	}
+	if v := strings.TrimSpace(os.Getenv("REDIS_KEY_PREFIX")); v != "" {
+		r.KeyPrefix = v
+	}
+	if v := strings.TrimSpace(os.Getenv("REDIS_TTL_HOURS")); v != "" {
+		if n, err := parseEnvInt(v); err == nil {
+			r.TTLHours = n
+		}
+	}
 }
 
 func publicBaseURLFromEnv() string {

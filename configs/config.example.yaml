@@ -53,6 +53,7 @@ teleport:
   audience: "syna-mcp"
 
 redis:
+  # Overridable via REDIS_ADDR / REDIS_KEY_PREFIX (control plane sets per-tenant Redis).
   addr: "redis:6379"
   password: ""
   db: 0

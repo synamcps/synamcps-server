@@ -32,6 +32,24 @@ func TestApplyAgentEnvOverrides(t *testing.T) {
 	}
 }
 
+func TestApplyRedisEnvOverrides(t *testing.T) {
+	t.Setenv("REDIS_ADDR", "synamcp-redis-test9:6379")
+	t.Setenv("REDIS_KEY_PREFIX", "syna:test9")
+	t.Setenv("REDIS_DB", "2")
+	cfg := Config{}
+	cfg.Redis.Addr = "redis:6379"
+	applyEnvOverrides(&cfg)
+	if cfg.Redis.Addr != "synamcp-redis-test9:6379" {
+		t.Fatalf("addr: %q", cfg.Redis.Addr)
+	}
+	if cfg.Redis.KeyPrefix != "syna:test9" {
+		t.Fatalf("key_prefix: %q", cfg.Redis.KeyPrefix)
+	}
+	if cfg.Redis.DB != 2 {
+		t.Fatalf("db: %d", cfg.Redis.DB)
+	}
+}
+
 func TestApplyPublicBaseURLEnvOverride(t *testing.T) {
 	t.Setenv("PUBLIC_BASE_URL", "https://test9.synamcps.net/")
 	cfg := Config{}
