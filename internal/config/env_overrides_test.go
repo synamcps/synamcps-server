@@ -32,6 +32,20 @@ func TestApplyAgentEnvOverrides(t *testing.T) {
 	}
 }
 
+func TestApplyPublicBaseURLEnvOverride(t *testing.T) {
+	t.Setenv("PUBLIC_BASE_URL", "https://test9.synamcps.net/")
+	cfg := Config{}
+	cfg.Server.PublicBaseURL = "http://localhost:8080"
+	cfg.OAuthAS.PublicBaseURL = "http://localhost:8080"
+	applyEnvOverrides(&cfg)
+	if cfg.Server.PublicBaseURL != "https://test9.synamcps.net" {
+		t.Fatalf("server: %q", cfg.Server.PublicBaseURL)
+	}
+	if cfg.OAuthAS.PublicBaseURL != "https://test9.synamcps.net" {
+		t.Fatalf("oauth_as: %q", cfg.OAuthAS.PublicBaseURL)
+	}
+}
+
 func TestApplyModelEnvOverrides(t *testing.T) {
 	t.Setenv("SYNAMCP_EMBEDDING_PROVIDER", "openai")
 	t.Setenv("SYNAMCP_EMBEDDING_MODEL", "text-embedding-3-small")

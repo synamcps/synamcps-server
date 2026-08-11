@@ -36,8 +36,8 @@ func (h *Handler) post(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
-	if !accepts(r, "application/json") && !accepts(r, "*/*") {
-		http.Error(w, "Accept must allow application/json", http.StatusNotAcceptable)
+	if !accepts(r, "application/json") && !accepts(r, "text/event-stream") && !accepts(r, "*/*") {
+		http.Error(w, "Accept must allow application/json or text/event-stream", http.StatusNotAcceptable)
 		return
 	}
 	if sessionID := r.Header.Get("Mcp-Session-Id"); sessionID != "" {

@@ -304,6 +304,21 @@ func applyEnvOverrides(cfg *Config) {
 	applyModelEnvOverrides(&cfg.Embedding, "SYNAMCP_EMBEDDING")
 	applyModelEnvOverrides(&cfg.Summarization, "SYNAMCP_SUMMARIZATION")
 	applyAgentEnvOverrides(&cfg.Agent)
+
+	if v := publicBaseURLFromEnv(); v != "" {
+		cfg.Server.PublicBaseURL = v
+		// Example configs set oauth_as.public_base_url to localhost; override both.
+		cfg.OAuthAS.PublicBaseURL = v
+	}
+}
+
+func publicBaseURLFromEnv() string {
+	for _, key := range []string{"PUBLIC_BASE_URL", "SYNAMCP_PUBLIC_BASE_URL"} {
+		if v := strings.TrimSpace(os.Getenv(key)); v != "" {
+			return strings.TrimRight(v, "/")
+		}
+	}
+	return ""
 }
 
 func applyModelEnvOverrides(m *ModelConfig, prefix string) {

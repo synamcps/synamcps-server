@@ -241,8 +241,11 @@ func main() {
 		Handler:           metrics.Middleware(logger, withMiddlewares(rootMux, cfg)),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       20 * time.Second,
-		WriteTimeout:      20 * time.Second,
-		IdleTimeout:       120 * time.Second,
+		// WriteTimeout must stay disabled: Streamable HTTP GET /mcp holds an SSE
+		// response open with keepalives. A finite WriteTimeout cuts Claude's
+		// post-OAuth session stream and surfaces as McpServerError.
+		WriteTimeout: 0,
+		IdleTimeout:  120 * time.Second,
 	}
 
 	go func() {
@@ -333,7 +336,10 @@ func buildAuthMethods(cfg config.Config) []string {
 func withMiddlewares(next http.Handler, cfg config.Config) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		origin := r.Header.Get("Origin")
-		if !isWebRoute(r.URL.Path) && !isAllowedOrigin(origin, r.Host, cfg.API.AllowedOrigins) {
+		// MCP transports are bearer-authenticated. Rejecting them by browser Origin
+		// breaks Claude Desktop/Connectors (Origin: https://claude.ai) after a
+		// successful OAuth handshake while /oauth/* still works.
+		if !isWebRoute(r.URL.Path) && !isMCPRoute(r.URL.Path) && !isAllowedOrigin(origin, r.Host, cfg.API.AllowedOrigins) {
 			http.Error(w, "origin not allowed", http.StatusForbidden)
 			return
 		}
@@ -341,7 +347,7 @@ func withMiddlewares(next http.Handler, cfg config.Config) http.Handler {
 			w.Header().Set("Access-Control-Allow-Origin", origin)
 			w.Header().Set("Vary", "Origin")
 		}
-		w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, Mcp-Session-Id")
+		w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, Mcp-Session-Id, MCP-Protocol-Version")
 		w.Header().Set("Access-Control-Expose-Headers", "Mcp-Session-Id, WWW-Authenticate")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-Frame-Options", "DENY")
@@ -359,6 +365,11 @@ func isWebRoute(path string) bool {
 		path == "/register" || path == "/authorize" || path == "/token" ||
 		strings.HasPrefix(path, "/app") || strings.HasPrefix(path, "/admin") ||
 		strings.HasPrefix(path, "/oauth") || strings.HasPrefix(path, "/.well-known/")
+}
+
+func isMCPRoute(path string) bool {
+	return path == "/mcp" || strings.HasPrefix(path, "/mcp/") ||
+		path == "/sse" || path == "/messages" || strings.HasPrefix(path, "/messages/")
 }
 
 func isAllowedOrigin(origin, host string, allowlist []string) bool {
