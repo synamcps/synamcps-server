@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -253,6 +254,7 @@ func Load(path string) (Config, error) {
 // runtime settings without rebuilding the image config file.
 // Precedence for DSN: METADATA_CATALOG_DSN, then DATABASE_URL, then yaml.
 // S3_* env vars override yaml when present (S3_ENDPOINT may be "" to disable).
+// SYNAMCP_EMBEDDING_* / SYNAMCP_SUMMARIZATION_* / SYNAMCP_AGENT_* override LLM roles.
 func applyEnvOverrides(cfg *Config) {
 	if v := strings.TrimSpace(os.Getenv("METADATA_CATALOG_DSN")); v != "" {
 		cfg.Metadata.DSN = v
@@ -280,6 +282,58 @@ func applyEnvOverrides(cfg *Config) {
 	if v := strings.TrimSpace(os.Getenv("S3_SECRET_KEY")); v != "" {
 		cfg.S3.SecretKeyEnvRef = "env:S3_SECRET_KEY"
 	}
+
+	applyModelEnvOverrides(&cfg.Embedding, "SYNAMCP_EMBEDDING")
+	applyModelEnvOverrides(&cfg.Summarization, "SYNAMCP_SUMMARIZATION")
+	applyAgentEnvOverrides(&cfg.Agent)
+}
+
+func applyModelEnvOverrides(m *ModelConfig, prefix string) {
+	if v := strings.TrimSpace(os.Getenv(prefix + "_PROVIDER")); v != "" {
+		m.Provider = v
+	}
+	if v := strings.TrimSpace(os.Getenv(prefix + "_MODEL")); v != "" {
+		m.Model = v
+	}
+	if v := strings.TrimSpace(os.Getenv(prefix + "_ENDPOINT")); v != "" {
+		m.API = v
+	}
+	if v := strings.TrimSpace(os.Getenv(prefix + "_API_KEY_ENV")); v != "" {
+		m.APIKeyEnvRef = "env:" + strings.TrimPrefix(v, "env:")
+	}
+	if v := strings.TrimSpace(os.Getenv(prefix + "_MAX_INPUT_TOKENS")); v != "" {
+		if n, err := parseEnvInt(v); err == nil {
+			m.MaxInputTokens = n
+		}
+	}
+	if v := strings.TrimSpace(os.Getenv(prefix + "_MAX_OUTPUT_TOKENS")); v != "" {
+		if n, err := parseEnvInt(v); err == nil {
+			m.MaxOutputTokens = n
+		}
+	}
+}
+
+func applyAgentEnvOverrides(a *AgentConfig) {
+	if v := strings.TrimSpace(os.Getenv("SYNAMCP_AGENT_PROVIDER")); v != "" {
+		a.Provider = v
+		// Control-plane agent configs are real chat models; enable agent when set.
+		a.Enabled = true
+	}
+	if v := strings.TrimSpace(os.Getenv("SYNAMCP_AGENT_MODEL")); v != "" {
+		a.Model = v
+		a.Enabled = true
+	}
+	if v := strings.TrimSpace(os.Getenv("SYNAMCP_AGENT_ENDPOINT")); v != "" {
+		a.API = v
+	}
+	if v := strings.TrimSpace(os.Getenv("SYNAMCP_AGENT_API_KEY_ENV")); v != "" {
+		a.APIKeyEnvRef = "env:" + strings.TrimPrefix(v, "env:")
+	}
+	if v := strings.TrimSpace(os.Getenv("SYNAMCP_AGENT_MAX_OUTPUT_TOKENS")); v != "" {
+		if n, err := parseEnvInt(v); err == nil {
+			a.MaxResponseTokens = n
+		}
+	}
 }
 
 func parseEnvBool(v string) bool {
@@ -289,6 +343,10 @@ func parseEnvBool(v string) bool {
 	default:
 		return false
 	}
+}
+
+func parseEnvInt(v string) (int, error) {
+	return strconv.Atoi(strings.TrimSpace(v))
 }
 
 func (c *Config) Validate() error {
