@@ -52,7 +52,7 @@ func (s *Server) HandleInitialize(ctx context.Context, w http.ResponseWriter, p 
 	sess := s.sessions.CreateMCPSession(p, 12*time.Hour)
 	w.Header().Set("Mcp-Session-Id", sess.SessionID)
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(NewResultResponse(id, s.initializeResult(supportedProtocolVersions[0], sess.SessionID)))
+	_ = json.NewEncoder(w).Encode(NewResultResponse(id, s.initializeResult(defaultProtocolVersion, sess.SessionID)))
 }
 
 func (s *Server) HandleJSONRPC(ctx context.Context, p models.Principal, request map[string]any) (map[string]any, error) {
