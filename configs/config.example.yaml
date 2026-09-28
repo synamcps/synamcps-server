@@ -139,6 +139,14 @@ usage:
       remote_write_url: ""
       interval_seconds: 30
 
+queue:
+  rabbitmq:
+    url: "" # e.g. amqp://guest:guest@rabbitmq:5672/ when profile rabbitmq is on
+
+bus:
+  kafka:
+    brokers: [] # e.g. ["kafka:9092"] when profile kafka is on
+
 mcp_proxy:
   enabled: true
   secrets_encryption_key_env_ref: "env:MCP_PROXY_SECRETS_KEY"

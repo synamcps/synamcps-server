@@ -28,6 +28,7 @@ type RouterDeps struct {
 	MaxBodyBytes          int64
 	OAuthASEnabled        bool
 	PublicBaseURL         string
+	DataObjects           *DataObjectHandler
 }
 
 func NewRouter(deps RouterDeps) http.Handler {
@@ -58,6 +59,9 @@ func NewRouter(deps RouterDeps) http.Handler {
 	mux.Handle("DELETE /api/knowledge/", guard(http.HandlerFunc(handler.Delete)))
 	if deps.Agent != nil {
 		mux.Handle("/api/agent/", guard(deps.AgentHandler()))
+	}
+	if deps.DataObjects != nil {
+		deps.DataObjects.Register(mux, guard)
 	}
 
 	return mux

@@ -83,12 +83,17 @@ func (s *Service) ResolveBearer(ctx context.Context, raw string) (models.APIAcce
 		AuthSource: "access_token",
 		Scopes:     []string{"mcp.token"},
 	}
+	objectScopes, err := s.store.TokenObjects(ctx, token.ID)
+	if err != nil {
+		return models.APIAccessContext{}, true, err
+	}
 	accessCtx := models.APIAccessContext{
 		Principal:      p,
 		AuthMode:       "access_token",
 		TokenID:        token.ID,
 		AccessToken:    &token,
 		AllowedStorage: scopes,
+		AllowedObjects: objectScopes,
 	}
 	if s.mcpStore != nil {
 		mcpScopes, err := s.mcpStore.TokenMCPServers(ctx, token.ID)

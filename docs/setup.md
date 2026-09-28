@@ -30,11 +30,15 @@ Key sections:
 - `summarization`: separate LLM for summary provider/model/api/tokens
 - `vector_backend.active`: `pgvector` or `qdrant`
 - `api.allowed_origins`: strict CORS allowlist (unknown origins are rejected)
-- `redis`: session backend settings (`addr`, `password`, `db`, key prefix, TTL)
+- `redis`: session backend settings (`addr`, `password`, `db`, key prefix, TTL). Compose uses `redis/redis-stack-server` so TimeSeries (`TS.*`) is available for counters and optional usage metrics.
+- `queue.rabbitmq.url`: optional RabbitMQ for queue objects (`docker compose --profile rabbitmq up`)
+- `bus.kafka.brokers`: optional Kafka for bus objects (`docker compose --profile kafka up`)
 - `limits.max_upload_bytes`: max request body size for the REST API (oversized bodies get `413`; default ~40 MiB)
 - `usage`: per-token rate limits (minute/hour/day + burst), retention and exporters
 - `agent`: built-in chat agent provider/model, system prompt, context limits, allowed knowledge tools, and conversation TTL
 - `web.user_ui.enabled`: enables the user-facing `/app` interface independently from the admin UI
+
+Typed data objects (variable, counter, table, queue, bus, schedule, log, git, storage) are managed in Admin → Data objects. See `docs/api.md`.
 
 ## Deployment model
 

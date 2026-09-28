@@ -21,18 +21,21 @@ import (
 )
 
 type Store struct {
-	mu          sync.RWMutex
-	users       map[string]models.User
-	groups      map[string]models.Group
-	memberships []models.GroupMembership
-	storages    map[string]models.Storage
-	acl         map[string]models.ACLBinding
-	tokens      map[string]models.AccessToken
-	tokenByHash map[string]string
-	tokenScopes []models.AccessTokenStorage
-	audit       []models.AuditEvent
-	pool        *pgxpool.Pool
-	useDB       bool
+	mu                sync.RWMutex
+	users             map[string]models.User
+	groups            map[string]models.Group
+	memberships       []models.GroupMembership
+	storages          map[string]models.Storage
+	objects           map[string]models.DataObject
+	acl               map[string]models.ACLBinding
+	objectACL         map[string]models.ObjectACLBinding
+	tokens            map[string]models.AccessToken
+	tokenByHash       map[string]string
+	tokenScopes       []models.AccessTokenStorage
+	tokenObjectScopes []models.AccessTokenObject
+	audit             []models.AuditEvent
+	pool              *pgxpool.Pool
+	useDB             bool
 }
 
 func NewStore(ctx context.Context, dsn string) (*Store, error) {
@@ -57,11 +60,13 @@ func (s *Store) Pool() *pgxpool.Pool { return s.pool }
 
 func NewInMemoryStore() *Store {
 	return &Store{
-		users:       map[string]models.User{},
-		groups:      map[string]models.Group{},
-		storages:    map[string]models.Storage{},
-		acl:         map[string]models.ACLBinding{},
-		tokens:      map[string]models.AccessToken{},
+		users:     map[string]models.User{},
+		groups:    map[string]models.Group{},
+		storages:  map[string]models.Storage{},
+		objects:   map[string]models.DataObject{},
+		acl:       map[string]models.ACLBinding{},
+		objectACL: map[string]models.ObjectACLBinding{},
+		tokens:    map[string]models.AccessToken{},
 		tokenByHash: map[string]string{},
 	}
 }
@@ -520,13 +525,30 @@ VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
 			owner.ID, owner.StorageID, owner.SubjectKey, string(owner.Role), owner.GrantedBy, owner.ExpiresAt, owner.CreatedAt); err != nil {
 			return models.Storage{}, err
 		}
-		return storage, tx.Commit(ctx)
+		if err := tx.Commit(ctx); err != nil {
+			return models.Storage{}, err
+		}
+		_, _ = s.CreateObject(ctx, objectFromStorage(storage), actor)
+		_ = s.EnsureUserRole(ctx, storage.OwnerSubjectKey)
+		return storage, nil
 	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.storages[storage.ID] = storage
 	owner := models.ACLBinding{ID: uuid.NewString(), StorageID: storage.ID, SubjectKey: storage.OwnerSubjectKey, Role: models.RoleStorageOwner, GrantedBy: actor, CreatedAt: now}
 	s.acl[owner.ID] = owner
+	if s.objects == nil {
+		s.objects = map[string]models.DataObject{}
+	}
+	if s.objectACL == nil {
+		s.objectACL = map[string]models.ObjectACLBinding{}
+	}
+	obj := objectFromStorage(storage)
+	s.objects[obj.ID] = obj
+	s.objectACL[owner.ID] = models.ObjectACLBinding{
+		ID: owner.ID, ObjectID: storage.ID, SubjectKey: owner.SubjectKey, Role: owner.Role,
+		GrantedBy: owner.GrantedBy, CreatedAt: owner.CreatedAt,
+	}
+	s.mu.Unlock()
 	return storage, nil
 }
 
@@ -957,8 +979,16 @@ func (s *Store) CreateToken(ctx context.Context, in CreateTokenInput) (models.Ac
 				scope.TokenID, scope.StorageID, string(scope.MaxMode), scope.ToolAllowlist, scope.CreatedAt); err != nil {
 				return models.AccessToken{}, "", err
 			}
+			if _, err := tx.Exec(ctx, `INSERT INTO access_token_objects (token_id, object_id, max_mode, method_allowlist, created_at) VALUES ($1,$2,$3,$4,$5) ON CONFLICT (token_id, object_id) DO UPDATE SET max_mode=EXCLUDED.max_mode, method_allowlist=EXCLUDED.method_allowlist`,
+				scope.TokenID, scope.StorageID, string(scope.MaxMode), scope.ToolAllowlist, scope.CreatedAt); err != nil {
+				return models.AccessToken{}, "", err
+			}
 		}
-		return token, raw, tx.Commit(ctx)
+		if err := tx.Commit(ctx); err != nil {
+			return models.AccessToken{}, "", err
+		}
+		_ = s.EnsureTokenRole(ctx, token.ID, token.OwnerSubjectKey)
+		return token, raw, nil
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -973,6 +1003,10 @@ func (s *Store) CreateToken(ctx context.Context, in CreateTokenInput) (models.Ac
 			scope.MaxMode = token.Mode
 		}
 		s.tokenScopes = append(s.tokenScopes, scope)
+		s.tokenObjectScopes = append(s.tokenObjectScopes, models.AccessTokenObject{
+			TokenID: scope.TokenID, ObjectID: scope.StorageID, MaxMode: scope.MaxMode,
+			MethodAllowlist: scope.ToolAllowlist, CreatedAt: scope.CreatedAt,
+		})
 	}
 	return token, raw, nil
 }

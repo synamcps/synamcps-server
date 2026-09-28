@@ -1,0 +1,13 @@
+DROP TABLE IF EXISTS table_registry;
+DROP TABLE IF EXISTS schedule_deliveries;
+DROP TABLE IF EXISTS schedule_entries;
+DROP TABLE IF EXISTS bus_offsets;
+DROP TABLE IF EXISTS bus_events;
+DROP TABLE IF EXISTS queue_messages;
+DROP TABLE IF EXISTS log_entries;
+DROP TABLE IF EXISTS counter_meta;
+DROP TABLE IF EXISTS variable_entries;
+DROP TABLE IF EXISTS data_plane_roles;
+DROP TABLE IF EXISTS access_token_objects;
+DROP TABLE IF EXISTS object_acl_bindings;
+DROP TABLE IF EXISTS data_objects;

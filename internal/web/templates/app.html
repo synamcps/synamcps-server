@@ -32,6 +32,7 @@ pre{background:#020617;padding:12px;border-radius:8px;overflow:auto}
 <button onclick="showTab('users')">Users</button>
 <button onclick="showTab('groups')">Groups</button>
 <button onclick="showTab('storages')">Storages</button>
+<button onclick="showTab('dataObjects')">Data objects</button>
 <button onclick="showTab('storage')">Storage</button>
 <button onclick="showTab('addItem')">Add item</button>
 <button onclick="showTab('tokens')">Tokens</button>
@@ -130,6 +131,51 @@ pre{background:#020617;padding:12px;border-radius:8px;overflow:auto}
 <button onclick="createStorage()">Create storage</button>
 <button onclick="loadStorages()">Refresh</button>
 <div id="storagesOut"></div></section>
+
+<section id="dataObjects"><h2>Data objects</h2>
+<div class="card">
+<label>Kind
+  <select id="objectKind">
+    <option value="variable">variable</option>
+    <option value="counter">counter</option>
+    <option value="table">table</option>
+    <option value="queue">queue</option>
+    <option value="bus">bus</option>
+    <option value="schedule">schedule</option>
+    <option value="log">log</option>
+    <option value="git">git</option>
+    <option value="storage">storage</option>
+  </select>
+</label>
+<label>Name <input id="objectName" placeholder="name"/></label>
+<label>Slug <input id="objectSlug" placeholder="slug (optional)"/></label>
+<label>Backend
+  <select id="objectBackend">
+    <option value="postgres">postgres</option>
+    <option value="rabbitmq">rabbitmq</option>
+    <option value="kafka">kafka</option>
+  </select>
+</label>
+<label>Log rotate_after <input id="objectRotateAfter" placeholder="24h" value="24h"/></label>
+<button onclick="createDataObject()">Create object</button>
+<button onclick="loadDataObjects()">Refresh</button>
+</div>
+<div class="card">
+<b>Selected object</b><br/>
+<select id="currentObjectId" style="width:420px"></select>
+<button onclick="loadObjectDetails()">Load</button>
+<label>rotate_after <input id="editRotateAfter" placeholder="24h"/></label>
+<button onclick="saveObjectConfig()">Save config</button>
+</div>
+<div class="card"><b>Object</b><pre id="objectInfoOut"></pre></div>
+<div class="card"><b>ACL</b>
+<input id="objectAclSubject" placeholder="subject_key"/>
+<select id="objectAclRole"><option>storage_owner</option><option>storage_admin</option><option>storage_writer</option><option>storage_reader</option></select>
+<button onclick="putObjectACL()">Grant</button>
+<pre id="objectAclOut"></pre>
+</div>
+<div id="objectsOut"></div>
+</section>
 
 <section id="storage"><h2>Storage</h2>
 <div class="card">

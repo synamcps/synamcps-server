@@ -15,20 +15,29 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/redis/go-redis/v9"
 	"github.com/synamcps/synamcps-server/internal/access"
 	"github.com/synamcps/synamcps-server/internal/agent"
 	"github.com/synamcps/synamcps-server/internal/auth"
 	"github.com/synamcps/synamcps-server/internal/auth/oauthas"
+	"github.com/synamcps/synamcps-server/internal/bus"
 	"github.com/synamcps/synamcps-server/internal/config"
+	"github.com/synamcps/synamcps-server/internal/counter"
+	"github.com/synamcps/synamcps-server/internal/gitstore"
 	"github.com/synamcps/synamcps-server/internal/httpapi"
 	"github.com/synamcps/synamcps-server/internal/knowledge"
 	"github.com/synamcps/synamcps-server/internal/knowledge/ingest"
 	"github.com/synamcps/synamcps-server/internal/llm"
+	"github.com/synamcps/synamcps-server/internal/logstore"
 	"github.com/synamcps/synamcps-server/internal/mcp"
 	"github.com/synamcps/synamcps-server/internal/mcpproxy"
 	"github.com/synamcps/synamcps-server/internal/observability"
+	"github.com/synamcps/synamcps-server/internal/policy"
+	"github.com/synamcps/synamcps-server/internal/queue"
+	"github.com/synamcps/synamcps-server/internal/schedule"
 	"github.com/synamcps/synamcps-server/internal/secrets"
 	"github.com/synamcps/synamcps-server/internal/session"
+	"github.com/synamcps/synamcps-server/internal/sqltables"
 	"github.com/synamcps/synamcps-server/internal/storage/blob"
 	metapg "github.com/synamcps/synamcps-server/internal/storage/meta/postgres"
 	"github.com/synamcps/synamcps-server/internal/storage/migrate"
@@ -39,6 +48,7 @@ import (
 	"github.com/synamcps/synamcps-server/internal/transport/legacysse"
 	"github.com/synamcps/synamcps-server/internal/transport/streamablehttp"
 	"github.com/synamcps/synamcps-server/internal/usage"
+	"github.com/synamcps/synamcps-server/internal/variable"
 	"github.com/synamcps/synamcps-server/internal/web"
 )
 
@@ -173,6 +183,36 @@ func main() {
 		"blob":     blobStore,
 	}))
 	statusHandler := httpapi.NewStatusHandler(cfg, usageService, catalog, sessions, blobStore)
+
+	opener := policy.NewOpener(accessService, pgPool)
+	var rabbitAMQP queue.AMQP
+	if cfg.Queue.RabbitMQ.URL != "" {
+		rabbitAMQP = queue.NewRabbitClient(cfg.Queue.RabbitMQ.URL)
+	}
+	var kafkaBus bus.Kafka
+	if len(cfg.Bus.Kafka.Brokers) > 0 {
+		kafkaBus = bus.NewKafkaClient(cfg.Bus.Kafka.Brokers)
+	}
+	variableSvc := variable.NewService()
+	var counterRedis *redis.Client
+	if cfg.Redis.Addr != "" {
+		counterRedis = redis.NewClient(&redis.Options{Addr: cfg.Redis.Addr, Password: cfg.Redis.Password, DB: cfg.Redis.DB})
+	}
+	counterSvc := counter.NewService(counterRedis, cfg.Redis.KeyPrefix)
+	logSvc := logstore.NewService(blobStore)
+	queueSvc := queue.NewService(rabbitAMQP)
+	busSvc := bus.NewService(kafkaBus)
+	scheduleSvc := schedule.NewService()
+	tableSvc := sqltables.NewService()
+	gitSvc := gitstore.NewService(blobStore)
+	dataHandler := &httpapi.DataObjectHandler{
+		Access: accessService, Opener: opener,
+		Variable: variableSvc, Counter: counterSvc, Log: logSvc,
+		Queue: queueSvc, Bus: busSvc, Schedule: scheduleSvc, Table: tableSvc, Git: gitSvc,
+	}
+	go schedule.NewWorker(pgPool, scheduleSvc, logger).Run(ctx)
+	go logstore.NewWorker(pgPool, logSvc, logger).Run(ctx)
+
 	apiRouter := httpapi.NewRouter(httpapi.RouterDeps{
 		Gateway:               gateway,
 		Sessions:              sessions,
@@ -189,8 +229,11 @@ func main() {
 		MaxBodyBytes:          cfg.Limits.MaxUploadBytes,
 		OAuthASEnabled:        cfg.OAuthAS.Enabled,
 		PublicBaseURL:         cfg.OAuthAS.PublicBaseURL,
+		DataObjects:           dataHandler,
 	})
 	rootMux.Handle("/api/", apiRouter)
+	authResolver := httpapi.NewAuthResolver(gateway, sessions)
+	dataHandler.RegisterGit(rootMux, authResolver.Middleware)
 	rootMux.HandleFunc("/api/capabilities", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
@@ -228,6 +271,10 @@ func main() {
 		Usage:     usageService,
 		Proxy:     mcpManager,
 		MCPAccess: mcpAccess,
+	})
+	mcpServer.AttachDataServices(mcp.DataServices{
+		Opener: opener, Variable: variableSvc, Counter: counterSvc, Log: logSvc,
+		Queue: queueSvc, Bus: busSvc, Schedule: scheduleSvc, Table: tableSvc, Git: gitSvc,
 	})
 	if cfg.Transport.StreamableHTTP {
 		streamablehttp.NewHandler(mcpServer, gateway, sessions).Register(rootMux)
@@ -364,7 +411,8 @@ func isWebRoute(path string) bool {
 	return path == "/" || path == "/login" || path == "/logout" ||
 		path == "/register" || path == "/authorize" || path == "/token" ||
 		strings.HasPrefix(path, "/app") || strings.HasPrefix(path, "/admin") ||
-		strings.HasPrefix(path, "/oauth") || strings.HasPrefix(path, "/.well-known/")
+		strings.HasPrefix(path, "/oauth") || strings.HasPrefix(path, "/.well-known/") ||
+		strings.HasPrefix(path, "/git/")
 }
 
 func isMCPRoute(path string) bool {

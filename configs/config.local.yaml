@@ -151,3 +151,11 @@ agent:
     - knowledge_search
     - knowledge_get
     - knowledge_save
+
+queue:
+  rabbitmq:
+    url: ""
+
+bus:
+  kafka:
+    brokers: []

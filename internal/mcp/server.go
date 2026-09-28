@@ -26,6 +26,7 @@ type Server struct {
 	usage     *usage.Service
 	proxy     *mcpproxy.Manager
 	mcpAccess *mcpproxy.AccessService
+	data      DataServices
 }
 
 type ServerDeps struct {
@@ -163,6 +164,14 @@ func (s *Server) dispatch(ctx context.Context, p models.Principal, accessCtx mod
 				return nil, err
 			}
 			result, err := s.proxy.CallTool(ctx, originalName, arguments, servers)
+			if err != nil {
+				*status = statusFromError(err)
+				return nil, err
+			}
+			return toolCallResult(result), nil
+		}
+		if _, _, ok := splitKindMethod(originalName); ok {
+			result, err := s.handleDataObjectTool(ctx, p, accessCtx, originalName, arguments)
 			if err != nil {
 				*status = statusFromError(err)
 				return nil, err
@@ -384,6 +393,11 @@ func (s *Server) handleToolsList(ctx context.Context, p models.Principal, access
 	if err != nil {
 		return nil, err
 	}
+	dataTools, err := s.buildDataObjectTools(ctx, p, accessCtx)
+	if err != nil {
+		return nil, err
+	}
+	tools = append(tools, dataTools...)
 	exposed, err := s.exposedProxy(ctx, p, accessCtx)
 	if err != nil {
 		return nil, err

@@ -107,6 +107,47 @@ async function refreshAddStorages(){await loadStorages();fillStorageSelect();}
 async function loadStorages(){const data=await api('/api/admin/storages');window.storages=Array.isArray(data)?data:[];document.getElementById('storagesOut').innerHTML=renderRows(window.storages,r=>actionButton('Open',"openStorage('"+r.id+"')")+actionButton('Delete',"deleteStorage('"+r.id+"')"));fillStorageSelect();fillSearchStorageSelect();fillStorageDetailSelect();fillTokenStorageSelect()}
 async function createStorage(){await api('/api/admin/storages',{method:'POST',body:JSON.stringify({name:storageName.value,visibility:storageVisibility.value})});loadStorages()}
 async function deleteStorage(id){if(confirm('Delete storage '+id+'?')){await api('/api/admin/storages/'+id,{method:'DELETE'});loadStorages()}}
+
+function objectLabel(o){return (o.kind||'?')+': '+(o.name||o.slug||o.id)+' ('+o.id+')';}
+async function loadDataObjects(){
+  const data=await api('/api/objects');
+  window.dataObjects=Array.isArray(data.objects)?data.objects:(Array.isArray(data)?data:[]);
+  document.getElementById('objectsOut').innerHTML=renderRows(window.dataObjects,r=>actionButton('Open',"openDataObject('"+r.id+"')")+actionButton('Delete',"deleteDataObject('"+r.id+"')"));
+  fillSelectGeneric('currentObjectId',window.dataObjects,objectLabel,{placeholder:'(select object)'});
+}
+function openDataObject(id){currentObjectId.value=id;showTab('dataObjects');loadObjectDetails()}
+async function createDataObject(){
+  const kind=objectKind.value;
+  const config={};
+  if(kind==='log' && objectRotateAfter.value){config.rotate_after=objectRotateAfter.value;}
+  await api('/api/objects',{method:'POST',body:JSON.stringify({kind,name:objectName.value,slug:objectSlug.value||undefined,backend:objectBackend.value,config})});
+  objectName.value='';objectSlug.value='';
+  loadDataObjects();
+}
+async function deleteDataObject(id){if(confirm('Delete object '+id+'?')){await api('/api/objects/'+id,{method:'DELETE'});loadDataObjects()}}
+async function loadObjectDetails(){
+  const id=(currentObjectId.value||'').trim();
+  if(!id){objectInfoOut.textContent='';objectAclOut.textContent='';return;}
+  const obj=await api('/api/objects/'+encodeURIComponent(id));
+  objectInfoOut.textContent=JSON.stringify(obj,null,2);
+  if(obj && obj.config && obj.config.rotate_after){editRotateAfter.value=String(obj.config.rotate_after);}
+  const acl=await api('/api/objects/'+encodeURIComponent(id)+'/acl');
+  objectAclOut.textContent=JSON.stringify(acl,null,2);
+}
+async function saveObjectConfig(){
+  const id=(currentObjectId.value||'').trim();
+  if(!id){return;}
+  const config={};
+  if(editRotateAfter.value){config.rotate_after=editRotateAfter.value;}
+  await api('/api/objects/'+encodeURIComponent(id),{method:'PATCH',body:JSON.stringify({config})});
+  loadObjectDetails();
+}
+async function putObjectACL(){
+  const id=(currentObjectId.value||'').trim();
+  if(!id){return;}
+  await api('/api/objects/'+encodeURIComponent(id)+'/acl',{method:'PUT',body:JSON.stringify({subjectKey:objectAclSubject.value,role:objectAclRole.value})});
+  loadObjectDetails();
+}
 async function loadTokens(){const data=await api('/api/admin/tokens');window.tokens=Array.isArray(data)?data:[];document.getElementById('tokensOut').innerHTML=renderRows(window.tokens,r=>actionButton('Connect',"connectTokenId.value='"+r.id+"';showTab('connect')")+actionButton('Delete',"deleteToken('"+r.id+"')"));fillSearchTokenSelect();fillTokenSelects()}
 async function createToken(){const storageIds=Array.from(document.getElementById('tokenStorageIds').selectedOptions).map(o=>o.value).filter(Boolean);const body={name:tokenName.value,mode:tokenMode.value,storageIds,rateLimit:{enabled:true,requestsPerMinute:Number(tokenRpm.value||0),requestsPerHour:Number(tokenRph.value||0),requestsPerDay:Number(tokenRpd.value||0)}};if(tokenMcpScopesJson.value.trim()){try{body.mcpServers=JSON.parse(tokenMcpScopesJson.value)}catch(e){alert('Invalid MCP scopes JSON');return}}const data=await api('/api/admin/tokens',{method:'POST',body:JSON.stringify(body)});if(data.rawToken){rawTokenBox.style.display='block';rawToken.textContent=data.rawToken;connectRawToken.value=data.rawToken}await loadTokens();if(data&&data.token&&data.token.id)connectTokenId.value=data.token.id}
 async function saveTokenMcpScopes(){const id=tokenMcpScopesTokenId.value.trim();if(!id){alert('token id required');return}let mcpServers=[];if(tokenMcpScopesJson.value.trim()){try{mcpServers=JSON.parse(tokenMcpScopesJson.value)}catch(e){alert('Invalid MCP scopes JSON');return}}const data=await api('/api/admin/tokens/'+encodeURIComponent(id)+'/mcp-scopes',{method:'PATCH',body:JSON.stringify({mcpServers})});alert(JSON.stringify(data,null,2))}
@@ -186,7 +227,7 @@ async function loadStatus(){
   });
   statusOut.innerHTML=renderRows(rows,_=>'');
 }
-async function loadAll(){await Promise.all([loadCurrentUser(),loadStatus(),loadUsers(),loadGroups(),loadStorages(),loadTokens(),loadMcpServers(),loadUsage()]);dashboardOut.textContent='Loaded status, users, groups, storages, tokens, mcp servers and usage.'}
+async function loadAll(){await Promise.all([loadCurrentUser(),loadStatus(),loadUsers(),loadGroups(),loadStorages(),loadDataObjects(),loadTokens(),loadMcpServers(),loadUsage()]);dashboardOut.textContent='Loaded status, users, groups, storages, data objects, tokens, mcp servers and usage.'}
 loadAll();
 
 function showSearchTab(which){

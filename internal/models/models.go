@@ -47,12 +47,13 @@ type WebSession struct {
 }
 
 type APIAccessContext struct {
-	Principal        Principal
-	AuthMode         string
-	GrantedScopes    []string
-	TokenID          string
-	AccessToken      *AccessToken
-	AllowedStorage   []AccessTokenStorage
+	Principal         Principal
+	AuthMode          string
+	GrantedScopes     []string
+	TokenID           string
+	AccessToken       *AccessToken
+	AllowedStorage    []AccessTokenStorage
+	AllowedObjects    []AccessTokenObject
 	AllowedMCPServers []AccessTokenMCPServer
 }
 
@@ -127,6 +128,7 @@ type StoragePermission string
 type AccessMode string
 type StorageStatus string
 type StorageKind string
+type ObjectKind string
 
 const (
 	RolePlatformAdmin StorageRole = "platform_admin"
@@ -155,6 +157,16 @@ const (
 	StorageStatusDeleting StorageStatus = "deleting"
 
 	StorageKindKnowledge StorageKind = "knowledge"
+
+	ObjectKindStorage  ObjectKind = "storage"
+	ObjectKindVariable ObjectKind = "variable"
+	ObjectKindCounter  ObjectKind = "counter"
+	ObjectKindTable    ObjectKind = "table"
+	ObjectKindQueue    ObjectKind = "queue"
+	ObjectKindBus      ObjectKind = "bus"
+	ObjectKindSchedule ObjectKind = "schedule"
+	ObjectKindLog      ObjectKind = "log"
+	ObjectKindGit      ObjectKind = "git"
 
 	RoleMCPServerOwner MCPServerRole = "mcp_server_owner"
 	RoleMCPServerAdmin MCPServerRole = "mcp_server_admin"
@@ -268,11 +280,58 @@ type AccessToken struct {
 }
 
 type AccessTokenStorage struct {
-	TokenID       string   `json:"tokenId"`
-	StorageID     string   `json:"storageId"`
+	TokenID       string     `json:"tokenId"`
+	StorageID     string     `json:"storageId"`
 	MaxMode       AccessMode `json:"maxMode"`
-	ToolAllowlist []string `json:"toolAllowlist,omitempty"`
-	CreatedAt     time.Time `json:"createdAt"`
+	ToolAllowlist []string   `json:"toolAllowlist,omitempty"`
+	CreatedAt     time.Time  `json:"createdAt"`
+}
+
+// AccessTokenObject scopes a token to a first-class data object.
+type AccessTokenObject struct {
+	TokenID         string     `json:"tokenId"`
+	ObjectID        string     `json:"objectId"`
+	MaxMode         AccessMode `json:"maxMode"`
+	MethodAllowlist []string   `json:"methodAllowlist,omitempty"`
+	CreatedAt       time.Time  `json:"createdAt"`
+}
+
+// DataObject is a first-class typed store (storage/variable/counter/...).
+type DataObject struct {
+	ID              string         `json:"id"`
+	Kind            ObjectKind     `json:"kind"`
+	Slug            string         `json:"slug"`
+	Name            string         `json:"name"`
+	OwnerSubjectKey string         `json:"ownerSubjectKey"`
+	Visibility      Visibility     `json:"visibility"`
+	DefaultAccess   AccessMode     `json:"defaultAccess"`
+	Status          StorageStatus  `json:"status"`
+	Backend         string         `json:"backend,omitempty"`
+	Config          map[string]any `json:"config,omitempty"`
+	S3Bucket        string         `json:"s3Bucket,omitempty"`
+	S3Prefix        string         `json:"s3Prefix,omitempty"`
+	CreatedAt       time.Time      `json:"createdAt"`
+	UpdatedAt       time.Time      `json:"updatedAt"`
+	ArchivedAt      *time.Time     `json:"archivedAt,omitempty"`
+}
+
+type ObjectACLBinding struct {
+	ID         string      `json:"id"`
+	ObjectID   string      `json:"objectId"`
+	SubjectKey string      `json:"subjectKey"`
+	Role       StorageRole `json:"role"`
+	GrantedBy  string      `json:"grantedBy,omitempty"`
+	ExpiresAt  *time.Time  `json:"expiresAt,omitempty"`
+	CreatedAt  time.Time   `json:"createdAt"`
+}
+
+type EffectiveObjectAccess struct {
+	ObjectID  string
+	Kind      ObjectKind
+	SubjectKey string
+	TokenID   string
+	Mode      AccessMode
+	Methods   []string
 }
 
 type MCPServer struct {

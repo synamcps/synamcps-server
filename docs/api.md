@@ -5,6 +5,32 @@
 - `cookieAuth`: web UI session (`session_id` cookie)
 - `bearerAuth`: `Authorization: Bearer <access-token>`
 
+## Data Objects
+
+First-class typed stores (siblings of knowledge storage). Create via `POST /api/objects`.
+Invoke methods via `POST /api/{kind}/{objectId}/{method}` (same names as MCP `{kind}_{method}`).
+
+| Kind | Methods |
+|------|---------|
+| storage | search, get, save, delete (via `/api/knowledge`) |
+| variable | set, get |
+| counter | set, get, increase, decrease |
+| table | query |
+| queue | enqueue, dequeue, peek, size |
+| bus | produce, consume, subscribe (SSE) |
+| schedule | set, get, list; wait on `GET /api/schedule/{id}/wait` |
+| log | add, tail (`config.rotate_after` editable via `PATCH /api/objects/{id}`) |
+| git | init, clone, add, commit, status, log, diff, branch, checkout, fetch, pull, push, tag, show, remote; smart HTTP at `/git/{objectId}/` |
+
+Catalog and ACL:
+
+- `GET /api/objects?kind=`
+- `POST /api/objects` body `{kind,slug,name,backend,config}`
+- `GET|PATCH|DELETE /api/objects/{id}`
+- `GET|PUT /api/objects/{id}/acl`
+
+Optional backends: queue `backend=rabbitmq` (`queue.rabbitmq.url`), bus `backend=kafka` (`bus.kafka.brokers`). Compose profiles `rabbitmq` and `kafka`.
+
 ## Knowledge Endpoints
 
 - `GET /api/knowledge`

@@ -33,6 +33,24 @@ type Config struct {
 	Usage         UsageConfig         `yaml:"usage"`
 	MCPProxy      MCPProxyConfig      `yaml:"mcp_proxy"`
 	Agent         AgentConfig         `yaml:"agent"`
+	Queue         QueueConfig         `yaml:"queue"`
+	Bus           BusConfig           `yaml:"bus"`
+}
+
+type QueueConfig struct {
+	RabbitMQ RabbitMQConfig `yaml:"rabbitmq"`
+}
+
+type RabbitMQConfig struct {
+	URL string `yaml:"url"`
+}
+
+type BusConfig struct {
+	Kafka KafkaConfig `yaml:"kafka"`
+}
+
+type KafkaConfig struct {
+	Brokers []string `yaml:"brokers"`
 }
 
 type OAuthASConfig struct {
