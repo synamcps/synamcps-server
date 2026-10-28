@@ -29,6 +29,7 @@ type RouterDeps struct {
 	OAuthASEnabled        bool
 	PublicBaseURL         string
 	DataObjects           *DataObjectHandler
+	AgentKeys             *AgentKeysHandler
 }
 
 func NewRouter(deps RouterDeps) http.Handler {
@@ -62,6 +63,9 @@ func NewRouter(deps RouterDeps) http.Handler {
 	}
 	if deps.DataObjects != nil {
 		deps.DataObjects.Register(mux, guard)
+	}
+	if deps.AgentKeys != nil {
+		deps.AgentKeys.Register(mux, guard)
 	}
 
 	return mux

@@ -133,6 +133,9 @@ async function loadObjectDetails(){
   if(obj && obj.config && obj.config.rotate_after){editRotateAfter.value=String(obj.config.rotate_after);}
   const acl=await api('/api/objects/'+encodeURIComponent(id)+'/acl');
   objectAclOut.textContent=JSON.stringify(acl,null,2);
+  const panel=document.getElementById('securebusPanel');
+  if(panel){panel.style.display=(obj&&obj.kind==='securebus')?'block':'none';}
+  if(obj&&obj.kind==='securebus'){loadSecurebusPolicy();}
 }
 async function saveObjectConfig(){
   const id=(currentObjectId.value||'').trim();
@@ -148,6 +151,114 @@ async function putObjectACL(){
   await api('/api/objects/'+encodeURIComponent(id)+'/acl',{method:'PUT',body:JSON.stringify({subjectKey:objectAclSubject.value,role:objectAclRole.value})});
   loadObjectDetails();
 }
+
+async function loadSecurebusPolicy(){
+  const id=(currentObjectId.value||'').trim();
+  if(!id){return;}
+  try{
+    const pol=await api('/api/objects/'+encodeURIComponent(id)+'/policy');
+    securebusPolicyJson.value=JSON.stringify(pol.document||pol,null,2);
+    securebusPolicyOut.textContent=JSON.stringify(pol,null,2);
+  }catch(e){
+    securebusPolicyOut.textContent=e.message||String(e);
+    if(!securebusPolicyJson.value.trim()){
+      securebusPolicyJson.value=JSON.stringify({
+        schema:'synamcps.securebus.policy/v1',topicId:id,version:1,issuedAt:new Date().toISOString(),chain:false,
+        agents:{},rules:{publish:[],attest:[],subscribe:[]},
+        attestation:{statuses:['ok','deny'],commentMaxBytes:4096,supersede:true},
+        conditions:{approved:{minOk:1}}
+      },null,2);
+    }
+  }
+}
+async function saveSecurebusPolicy(){
+  const id=(currentObjectId.value||'').trim();
+  if(!id){return;}
+  let doc; try{doc=JSON.parse(securebusPolicyJson.value)}catch(e){alert('Invalid JSON');return;}
+  const pol=await api('/api/objects/'+encodeURIComponent(id)+'/policy',{method:'PUT',body:JSON.stringify(doc)});
+  securebusPolicyOut.textContent=JSON.stringify(pol,null,2);
+  securebusPolicyJson.value=JSON.stringify(pol.document||doc,null,2);
+}
+
+function b64url(buf){const bytes=buf instanceof ArrayBuffer?new Uint8Array(buf):buf;let s='';for(let i=0;i<bytes.length;i++)s+=String.fromCharCode(bytes[i]);return btoa(s).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');}
+function canonicalJSON(v){
+  if(v===null||typeof v!=='object') return JSON.stringify(v);
+  if(Array.isArray(v)) return '['+v.map(canonicalJSON).join(',')+']';
+  const keys=Object.keys(v).sort();
+  return '{'+keys.map(k=>JSON.stringify(k)+':'+canonicalJSON(v[k])).join(',')+'}';
+}
+async function sha256Bytes(str){
+  const data=new TextEncoder().encode(str);
+  return new Uint8Array(await crypto.subtle.digest('SHA-256',data));
+}
+async function getOrCreateBrowserKey(){
+  if(window.__synaBrowserKey && window.__synaBrowserKey.pair){return window.__synaBrowserKey;}
+  const pair=await crypto.subtle.generateKey({name:'ECDSA',namedCurve:'P-256'},true,['sign','verify']);
+  const raw=await crypto.subtle.exportKey('raw',pair.publicKey);
+  window.__synaBrowserKey={pair,publicKeyB64:b64url(raw),alg:'ecdsa-p256',keyId:localStorage.getItem('syna_securebus_keyid')||''};
+  try{localStorage.setItem('syna_securebus_pubkey',window.__synaBrowserKey.publicKeyB64);}catch(e){}
+  return window.__synaBrowserKey;
+}
+async function signBrowserEnvelope(envelope){
+  const key=await getOrCreateBrowserKey();
+  const canon=canonicalJSON(envelope);
+  // WebCrypto hashes the input with SHA-256; server verifies ECDSA over sha256(canonical JSON).
+  const sig=await crypto.subtle.sign({name:'ECDSA',hash:'SHA-256'},key.pair.privateKey,new TextEncoder().encode(canon));
+  return b64url(sig);
+}
+async function registerBrowserKey(){
+  const out=document.getElementById('securebusAttestOut');
+  try{
+    const key=await getOrCreateBrowserKey();
+    const ch=await api('/api/agent-keys/challenge',{method:'POST',body:'{}'});
+    const envelope={nonce:ch.nonce,publicKey:key.publicKeyB64,sessionId:'session'};
+    // Binder on server is session:<cookie>; client still signs sessionId as the binder string from cookie is unknown.
+    // Re-fetch challenge binder alignment: server uses session cookie value. Include cookie session via empty token path.
+    const sid=(document.cookie.match(/(?:^|; )session_id=([^;]*)/)||[])[1];
+    const env={nonce:ch.nonce,publicKey:key.publicKeyB64,sessionId:sid?('session:'+decodeURIComponent(sid)):'session'};
+    const signature=await signBrowserEnvelope(env);
+    const reg=await api('/api/agent-keys',{method:'POST',body:JSON.stringify({alg:'ecdsa-p256',publicKey:key.publicKeyB64,nonce:ch.nonce,signature})});
+    key.keyId=reg.keyId; localStorage.setItem('syna_securebus_keyid',reg.keyId);
+    out.textContent=JSON.stringify(reg,null,2);
+  }catch(e){out.textContent=e.message||String(e);}
+}
+async function attestSecurebusMessage(){
+  const id=(currentObjectId.value||'').trim();
+  const mid=Number(attestMessageId.value||0);
+  const out=document.getElementById('securebusAttestOut');
+  try{
+    const key=await getOrCreateBrowserKey();
+    if(!key.keyId){await registerBrowserKey();}
+    const pol=await api('/api/objects/'+encodeURIComponent(id)+'/policy');
+    const createdAt=new Date().toISOString();
+    // Need message hash from verify
+    const vr=await api('/api/securebus/'+encodeURIComponent(id)+'/verify',{method:'POST',body:JSON.stringify({messageId:mid})});
+    const messageHash=vr.message&&vr.message.hash;
+    const envelope={messageId:mid,messageHash,policyVersion:pol.version||pol.document.version,signerKeyId:key.keyId||localStorage.getItem('syna_securebus_keyid'),status:attestStatus.value,comment:attestComment.value||'',createdAt};
+    // numbers in JSON must be numbers for canonical form matching Go float64
+    envelope.messageId=mid;
+    envelope.policyVersion=Number(envelope.policyVersion);
+    const signature=await signBrowserEnvelope(envelope);
+    const res=await api('/api/securebus/'+encodeURIComponent(id)+'/attest',{method:'POST',body:JSON.stringify({
+      keyId:envelope.signerKeyId,messageId:mid,policyVersion:envelope.policyVersion,status:envelope.status,comment:envelope.comment,createdAt,signature
+    })});
+    out.textContent=JSON.stringify(res,null,2);
+  }catch(e){out.textContent=e.message||String(e);}
+}
+async function verifySecurebusMessage(){
+  const id=(currentObjectId.value||'').trim();
+  const mid=Number(verifyMessageId.value||0);
+  if(!id||!mid){return;}
+  const res=await api('/api/securebus/'+encodeURIComponent(id)+'/verify',{method:'POST',body:JSON.stringify({messageId:mid})});
+  securebusAttestOut.textContent=JSON.stringify(res,null,2);
+}
+async function loadAgentKeys(){
+  const data=await api('/api/agent-keys');
+  const keys=Array.isArray(data.keys)?data.keys:[];
+  document.getElementById('agentKeysOut').innerHTML=renderRows(keys,r=>actionButton('Revoke',"revokeAgentKey('"+r.keyId+"')"))||'<p class="muted">No keys</p>';
+}
+async function revokeAgentKey(id){if(confirm('Revoke key '+id+'?')){await api('/api/agent-keys/'+encodeURIComponent(id),{method:'DELETE'});loadAgentKeys();}}
+
 async function loadTokens(){const data=await api('/api/admin/tokens');window.tokens=Array.isArray(data)?data:[];document.getElementById('tokensOut').innerHTML=renderRows(window.tokens,r=>actionButton('Connect',"connectTokenId.value='"+r.id+"';showTab('connect')")+actionButton('Delete',"deleteToken('"+r.id+"')"));fillSearchTokenSelect();fillTokenSelects()}
 async function createToken(){const storageIds=Array.from(document.getElementById('tokenStorageIds').selectedOptions).map(o=>o.value).filter(Boolean);const body={name:tokenName.value,mode:tokenMode.value,storageIds,rateLimit:{enabled:true,requestsPerMinute:Number(tokenRpm.value||0),requestsPerHour:Number(tokenRph.value||0),requestsPerDay:Number(tokenRpd.value||0)}};if(tokenMcpScopesJson.value.trim()){try{body.mcpServers=JSON.parse(tokenMcpScopesJson.value)}catch(e){alert('Invalid MCP scopes JSON');return}}const data=await api('/api/admin/tokens',{method:'POST',body:JSON.stringify(body)});if(data.rawToken){rawTokenBox.style.display='block';rawToken.textContent=data.rawToken;connectRawToken.value=data.rawToken}await loadTokens();if(data&&data.token&&data.token.id)connectTokenId.value=data.token.id}
 async function saveTokenMcpScopes(){const id=tokenMcpScopesTokenId.value.trim();if(!id){alert('token id required');return}let mcpServers=[];if(tokenMcpScopesJson.value.trim()){try{mcpServers=JSON.parse(tokenMcpScopesJson.value)}catch(e){alert('Invalid MCP scopes JSON');return}}const data=await api('/api/admin/tokens/'+encodeURIComponent(id)+'/mcp-scopes',{method:'PATCH',body:JSON.stringify({mcpServers})});alert(JSON.stringify(data,null,2))}
@@ -227,7 +338,7 @@ async function loadStatus(){
   });
   statusOut.innerHTML=renderRows(rows,_=>'');
 }
-async function loadAll(){await Promise.all([loadCurrentUser(),loadStatus(),loadUsers(),loadGroups(),loadStorages(),loadDataObjects(),loadTokens(),loadMcpServers(),loadUsage()]);dashboardOut.textContent='Loaded status, users, groups, storages, data objects, tokens, mcp servers and usage.'}
+async function loadAll(){await Promise.all([loadCurrentUser(),loadStatus(),loadUsers(),loadGroups(),loadStorages(),loadDataObjects(),loadTokens(),loadAgentKeys(),loadMcpServers(),loadUsage()]);dashboardOut.textContent='Loaded status, users, groups, storages, data objects, tokens, agent keys, mcp servers and usage.'}
 loadAll();
 
 function showSearchTab(which){

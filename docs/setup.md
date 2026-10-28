@@ -33,12 +33,45 @@ Key sections:
 - `redis`: session backend settings (`addr`, `password`, `db`, key prefix, TTL). Compose uses `redis/redis-stack-server` so TimeSeries (`TS.*`) is available for counters and optional usage metrics.
 - `queue.rabbitmq.url`: optional RabbitMQ for queue objects (`docker compose --profile rabbitmq up`)
 - `bus.kafka.brokers`: optional Kafka for bus objects (`docker compose --profile kafka up`)
+- `securebus.policy_signing_key_env_ref`: Ed25519 seed for signing topic policies (`SECUREBUS_POLICY_SIGNING_KEY`); empty generates an ephemeral key (dev only)
+- `securebus.policy_grace_seconds`: allow previous policy version briefly during rotation (default 300)
 - `limits.max_upload_bytes`: max request body size for the REST API (oversized bodies get `413`; default ~40 MiB)
 - `usage`: per-token rate limits (minute/hour/day + burst), retention and exporters
 - `agent`: built-in chat agent provider/model, system prompt, context limits, allowed knowledge tools, and conversation TTL
 - `web.user_ui.enabled`: enables the user-facing `/app` interface independently from the admin UI
 
-Typed data objects (variable, counter, table, queue, bus, schedule, log, git, storage) are managed in Admin → Data objects. See `docs/api.md`.
+Typed data objects (variable, counter, table, queue, bus, securebus, schedule, log, git, storage) are managed in Admin → Data objects. See `docs/api.md` and `docs/securebus-envelope.md`.
+
+### Securebus agent sidecar
+
+Claude Desktop / Cursor cannot hold Ed25519 keys. Run the local stdio MCP sidecar:
+
+```bash
+go build -o securebus-agent ./cmd/securebus-agent
+export SYNA_BASE_URL=http://localhost:8080
+export SYNA_TOKEN=<opaque access token>
+export SYNA_TOKEN_ID=<token id from admin UI>
+./securebus-agent
+```
+
+Cursor / Claude Desktop stdio config example:
+
+```json
+{
+  "mcpServers": {
+    "securebus": {
+      "command": "/path/to/securebus-agent",
+      "env": {
+        "SYNA_BASE_URL": "https://your-host",
+        "SYNA_TOKEN": "<token>",
+        "SYNA_TOKEN_ID": "<token-id>"
+      }
+    }
+  }
+}
+```
+
+Tools: `keygen`, `register`, `securebus_publish`, `securebus_attest`, plus read tools (`policy`, `verify`, `consume`, `keys`).
 
 ## Deployment model
 

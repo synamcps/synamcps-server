@@ -20,21 +20,23 @@ import (
 	"github.com/synamcps/synamcps-server/internal/policy"
 	"github.com/synamcps/synamcps-server/internal/queue"
 	"github.com/synamcps/synamcps-server/internal/schedule"
+	"github.com/synamcps/synamcps-server/internal/securebus"
 	"github.com/synamcps/synamcps-server/internal/sqltables"
 	"github.com/synamcps/synamcps-server/internal/variable"
 )
 
 type DataObjectHandler struct {
-	Access   *access.Service
-	Opener   *policy.Opener
-	Variable *variable.Service
-	Counter  *counter.Service
-	Log      *logstore.Service
-	Queue    *queue.Service
-	Bus      *bus.Service
-	Schedule *schedule.Service
-	Table    *sqltables.Service
-	Git      *gitstore.Service
+	Access    *access.Service
+	Opener    *policy.Opener
+	Variable  *variable.Service
+	Counter   *counter.Service
+	Log       *logstore.Service
+	Queue     *queue.Service
+	Bus       *bus.Service
+	SecureBus *securebus.Service
+	Schedule  *schedule.Service
+	Table     *sqltables.Service
+	Git       *gitstore.Service
 }
 
 func (h *DataObjectHandler) Register(mux *http.ServeMux, auth func(http.Handler) http.Handler) {
@@ -45,9 +47,11 @@ func (h *DataObjectHandler) Register(mux *http.ServeMux, auth func(http.Handler)
 	mux.Handle("DELETE /api/objects/{id}", auth(http.HandlerFunc(h.deleteObject)))
 	mux.Handle("GET /api/objects/{id}/acl", auth(http.HandlerFunc(h.getACL)))
 	mux.Handle("PUT /api/objects/{id}/acl", auth(http.HandlerFunc(h.putACL)))
+	mux.Handle("GET /api/objects/{id}/policy", auth(http.HandlerFunc(h.getObjectPolicy)))
+	mux.Handle("PUT /api/objects/{id}/policy", auth(http.HandlerFunc(h.putObjectPolicy)))
 	mux.Handle("GET /api/schedule/{id}/wait", auth(http.HandlerFunc(h.scheduleWait)))
 
-	for _, kind := range []string{"variable", "counter", "table", "queue", "bus", "schedule", "log", "git", "storage"} {
+	for _, kind := range []string{"variable", "counter", "table", "queue", "bus", "securebus", "schedule", "log", "git", "storage"} {
 		mux.Handle("POST /api/"+kind+"/{id}/{method}", auth(http.HandlerFunc(h.invoke)))
 		mux.Handle("GET /api/"+kind+"/{id}/{method}", auth(http.HandlerFunc(h.invoke)))
 	}
@@ -224,6 +228,103 @@ func (h *DataObjectHandler) getACL(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"acl": acl}, http.StatusOK)
 }
 
+func (h *DataObjectHandler) getObjectPolicy(w http.ResponseWriter, r *http.Request) {
+	if h.SecureBus == nil {
+		http.Error(w, "securebus not configured", http.StatusServiceUnavailable)
+		return
+	}
+	p, ok := principalFromRequest(r)
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	ac := accessContextFromRequest(r)
+	id := r.PathValue("id")
+	version := int(asFloatParam(r.URL.Query().Get("version")))
+	scope, err := h.Opener.Open(r.Context(), p, ac, id, "policy")
+	if err != nil {
+		http.Error(w, err.Error(), statusFromPolicy(err))
+		return
+	}
+	sp, err := h.SecureBus.GetPolicy(r.Context(), scope, version)
+	if err != nil {
+		http.Error(w, err.Error(), statusFromPolicy(err))
+		return
+	}
+	writeJSON(w, sp, http.StatusOK)
+}
+
+func (h *DataObjectHandler) putObjectPolicy(w http.ResponseWriter, r *http.Request) {
+	if h.SecureBus == nil {
+		http.Error(w, "securebus not configured", http.StatusServiceUnavailable)
+		return
+	}
+	p, ok := principalFromRequest(r)
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	ac := accessContextFromRequest(r)
+	id := r.PathValue("id")
+	obj, found, err := h.Access.GetObject(r.Context(), id)
+	if err != nil {
+		http.Error(w, err.Error(), statusFromErr(err))
+		return
+	}
+	if !found || obj.Kind != models.ObjectKindSecureBus {
+		http.Error(w, "securebus object not found", http.StatusNotFound)
+		return
+	}
+	if !h.canManageObject(r, p, ac, id) {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	var doc securebus.Document
+	if err := json.NewDecoder(r.Body).Decode(&doc); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	// Open a write scope via publish (mutating) to get a data-plane tx; PutPolicy needs the scope.
+	scope, err := h.Opener.Open(r.Context(), p, ac, id, "publish")
+	if err != nil {
+		// Owners may not have publish if token is read-only; try with empty method path via get then manual — fall back forbidden.
+		http.Error(w, err.Error(), statusFromPolicy(err))
+		return
+	}
+	sp, err := h.SecureBus.PutPolicy(r.Context(), scope, doc, models.SubjectKeyForPrincipal(p))
+	if err != nil {
+		http.Error(w, err.Error(), statusFromPolicy(err))
+		return
+	}
+	writeJSON(w, sp, http.StatusOK)
+}
+
+func (h *DataObjectHandler) canManageObject(r *http.Request, p models.Principal, _ models.APIAccessContext, objectID string) bool {
+	if strutilContains(p.Scopes, "platform_admin") {
+		return true
+	}
+	acl, err := h.Access.Store().ObjectACLForObject(r.Context(), objectID)
+	if err != nil {
+		return false
+	}
+	subject := models.SubjectKeyForPrincipal(p)
+	for _, b := range acl {
+		if b.SubjectKey == subject && (b.Role == models.RoleStorageOwner || b.Role == models.RoleStorageAdmin) {
+			return true
+		}
+	}
+	return false
+}
+
+func strutilContains(list []string, v string) bool {
+	for _, x := range list {
+		if x == v {
+			return true
+		}
+	}
+	return false
+}
+
 func (h *DataObjectHandler) putACL(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	p, ok := principalFromRequest(r)
@@ -377,6 +478,8 @@ func (h *DataObjectHandler) dispatch(ctx context.Context, p models.Principal, ac
 				return nil
 			})
 		}
+	case models.ObjectKindSecureBus:
+		return h.dispatchSecureBus(ctx, p, ac, id, method, params, scope, w)
 	case models.ObjectKindSchedule:
 		switch method {
 		case "set":
@@ -412,6 +515,69 @@ func (h *DataObjectHandler) dispatch(ctx context.Context, p models.Principal, ac
 	}
 	_ = scope.Rollback(ctx)
 	return nil, policy.ErrUnknownMethod
+}
+
+func (h *DataObjectHandler) dispatchSecureBus(ctx context.Context, p models.Principal, ac models.APIAccessContext, id, method string, params map[string]any, scope *policy.Scope, w http.ResponseWriter) (any, error) {
+	if h.SecureBus == nil {
+		_ = scope.Rollback(ctx)
+		return nil, errors.New("securebus not configured")
+	}
+	tokenID := ""
+	if ac.AccessToken != nil {
+		tokenID = ac.AccessToken.ID
+	}
+	subject := models.SubjectKeyForPrincipal(p)
+	switch method {
+	case "policy":
+		version := int(asFloatParam(params["version"]))
+		return h.SecureBus.GetPolicy(ctx, scope, version)
+	case "publish":
+		createdAt, _ := time.Parse(time.RFC3339Nano, asStringParam(params["createdAt"]))
+		payload, _ := params["payload"].(map[string]any)
+		return h.SecureBus.Publish(ctx, scope, securebus.PublishInput{
+			KeyID: asStringParam(params["keyId"]), SubjectKey: subject, TokenID: tokenID,
+			PolicyVersion: int(asFloatParam(params["policyVersion"])), PolicyHash: asStringParam(params["policyHash"]),
+			Nonce: asStringParam(params["nonce"]), CreatedAt: createdAt, Payload: payload,
+			Signature: asStringParam(params["signature"]), PrevHash: asStringParam(params["prevHash"]),
+		})
+	case "attest":
+		createdAt, _ := time.Parse(time.RFC3339Nano, asStringParam(params["createdAt"]))
+		return h.SecureBus.Attest(ctx, scope, securebus.AttestInput{
+			KeyID: asStringParam(params["keyId"]), SubjectKey: subject, TokenID: tokenID,
+			MessageID: int64(asFloatParam(params["messageId"])), PolicyVersion: int(asFloatParam(params["policyVersion"])),
+			Status: asStringParam(params["status"]), Comment: asStringParam(params["comment"]),
+			CreatedAt: createdAt, Signature: asStringParam(params["signature"]),
+		})
+	case "verify":
+		return h.SecureBus.Verify(ctx, scope, int64(asFloatParam(params["messageId"])))
+	case "keys":
+		return h.SecureBus.Keys(ctx, scope)
+	case "consume":
+		filter, _ := params["filter"].(map[string]any)
+		return h.SecureBus.Consume(ctx, scope, asStringParam(params["consumer"]), asStringParam(params["condition"]), filter, int(asFloatParam(params["max"])))
+	case "subscribe":
+		filter, _ := params["filter"].(map[string]any)
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher, _ := w.(http.Flusher)
+		_ = scope.Commit(ctx)
+		return nil, h.SecureBus.Subscribe(ctx, func() (*policy.Scope, error) {
+			return h.Opener.Open(ctx, p, ac, id, "consume")
+		}, asStringParam(params["consumer"]), asStringParam(params["condition"]), filter, func(m securebus.Message) error {
+			raw, _ := json.Marshal(m)
+			_, _ = w.Write([]byte("data: " + string(raw) + "\n\n"))
+			if flusher != nil {
+				flusher.Flush()
+			}
+			return nil
+		})
+	}
+	_ = scope.Rollback(ctx)
+	return nil, policy.ErrUnknownMethod
+}
+
+func asStringParam(v any) string {
+	s, _ := v.(string)
+	return strings.TrimSpace(s)
 }
 
 func (h *DataObjectHandler) gitSmartHTTP(w http.ResponseWriter, r *http.Request) {
@@ -473,11 +639,12 @@ var errNotFound = errors.New("not found")
 
 func statusFromPolicy(err error) int {
 	switch {
-	case errors.Is(err, policy.ErrForbidden):
+	case errors.Is(err, policy.ErrForbidden), errors.Is(err, securebus.ErrForbiddenByPolicy), errors.Is(err, securebus.ErrKeyNotAllowed):
 		return http.StatusForbidden
-	case errors.Is(err, policy.ErrObjectNotFound), errors.Is(err, errNotFound):
+	case errors.Is(err, policy.ErrObjectNotFound), errors.Is(err, errNotFound), errors.Is(err, securebus.ErrNotFound):
 		return http.StatusNotFound
-	case errors.Is(err, policy.ErrUnknownMethod), errors.Is(err, policy.ErrKindMismatch):
+	case errors.Is(err, policy.ErrUnknownMethod), errors.Is(err, policy.ErrKindMismatch),
+		errors.Is(err, securebus.ErrInvalidSignature), errors.Is(err, securebus.ErrStalePolicy):
 		return http.StatusBadRequest
 	default:
 		return http.StatusBadRequest

@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "synamcps.securebus.policy/v1",
+  "type": "object",
+  "required": ["schema", "topicId", "version", "issuedAt", "agents", "rules"],
+  "additionalProperties": false,
+  "properties": {
+    "schema": { "const": "synamcps.securebus.policy/v1" },
+    "topicId": { "type": "string", "minLength": 1 },
+    "version": { "type": "integer", "minimum": 1 },
+    "issuedAt": { "type": "string", "minLength": 1 },
+    "chain": { "type": "boolean" },
+    "agents": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {
+        "type": "object",
+        "required": ["keyId", "alg", "publicKey"],
+        "additionalProperties": false,
+        "properties": {
+          "keyId": { "type": "string", "minLength": 1 },
+          "alg": { "enum": ["ed25519", "ecdsa-p256"] },
+          "publicKey": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "rules": {
+      "type": "object",
+      "required": ["publish", "attest", "subscribe"],
+      "additionalProperties": false,
+      "properties": {
+        "publish": { "type": "array", "items": { "type": "string" } },
+        "attest": { "type": "array", "items": { "type": "string" } },
+        "subscribe": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "attestation": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "statuses": {
+          "type": "array",
+          "items": { "enum": ["ok", "deny"] },
+          "minItems": 1
+        },
+        "commentMaxBytes": { "type": "integer", "minimum": 0 },
+        "supersede": { "type": "boolean" }
+      }
+    },
+    "conditions": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "authors": { "type": "array", "items": { "type": "string" } },
+          "require": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["agent", "status"],
+              "additionalProperties": false,
+              "properties": {
+                "agent": { "type": "string" },
+                "status": { "enum": ["ok", "deny"] }
+              }
+            }
+          },
+          "minOk": { "type": "integer", "minimum": 0 },
+          "anyDeny": { "type": "boolean" },
+          "mode": { "enum": ["on_publish", "on_condition"] }
+        }
+      }
+    }
+  }
+}

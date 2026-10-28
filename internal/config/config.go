@@ -35,6 +35,7 @@ type Config struct {
 	Agent         AgentConfig         `yaml:"agent"`
 	Queue         QueueConfig         `yaml:"queue"`
 	Bus           BusConfig           `yaml:"bus"`
+	SecureBus     SecureBusConfig     `yaml:"securebus"`
 }
 
 type QueueConfig struct {
@@ -51,6 +52,15 @@ type BusConfig struct {
 
 type KafkaConfig struct {
 	Brokers []string `yaml:"brokers"`
+}
+
+type SecureBusConfig struct {
+	PolicySigningKeyEnvRef string `yaml:"policy_signing_key_env_ref"`
+	PolicyGraceSeconds     int    `yaml:"policy_grace_seconds"`
+}
+
+func (c Config) SecureBusPolicySigningKey() string {
+	return resolveSecret(c.SecureBus.PolicySigningKeyEnvRef)
 }
 
 type OAuthASConfig struct {

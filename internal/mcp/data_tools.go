@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/synamcps/synamcps-server/internal/bus"
 	"github.com/synamcps/synamcps-server/internal/counter"
@@ -14,21 +15,23 @@ import (
 	"github.com/synamcps/synamcps-server/internal/policy"
 	"github.com/synamcps/synamcps-server/internal/queue"
 	"github.com/synamcps/synamcps-server/internal/schedule"
+	"github.com/synamcps/synamcps-server/internal/securebus"
 	"github.com/synamcps/synamcps-server/internal/sqltables"
 	"github.com/synamcps/synamcps-server/internal/strutil"
 	"github.com/synamcps/synamcps-server/internal/variable"
 )
 
 type DataServices struct {
-	Opener   *policy.Opener
-	Variable *variable.Service
-	Counter  *counter.Service
-	Log      *logstore.Service
-	Queue    *queue.Service
-	Bus      *bus.Service
-	Schedule *schedule.Service
-	Table    *sqltables.Service
-	Git      *gitstore.Service
+	Opener    *policy.Opener
+	Variable  *variable.Service
+	Counter   *counter.Service
+	Log       *logstore.Service
+	Queue     *queue.Service
+	Bus       *bus.Service
+	SecureBus *securebus.Service
+	Schedule  *schedule.Service
+	Table     *sqltables.Service
+	Git       *gitstore.Service
 }
 
 func (s *Server) AttachDataServices(ds DataServices) {
@@ -42,7 +45,7 @@ func (s *Server) buildDataObjectTools(ctx context.Context, p models.Principal, a
 	out := []map[string]any{}
 	kinds := []models.ObjectKind{
 		models.ObjectKindVariable, models.ObjectKindCounter, models.ObjectKindTable,
-		models.ObjectKindQueue, models.ObjectKindBus, models.ObjectKindSchedule,
+		models.ObjectKindQueue, models.ObjectKindBus, models.ObjectKindSecureBus, models.ObjectKindSchedule,
 		models.ObjectKindLog, models.ObjectKindGit,
 	}
 	for _, kind := range kinds {
@@ -105,6 +108,37 @@ func (s *Server) buildDataObjectTools(ctx context.Context, p models.Principal, a
 				}
 				if method == "consume" || method == "subscribe" {
 					props["consumer"] = map[string]any{"type": "string"}
+				}
+			case models.ObjectKindSecureBus:
+				switch method {
+				case "publish":
+					props["keyId"] = map[string]any{"type": "string"}
+					props["policyVersion"] = map[string]any{"type": "integer"}
+					props["policyHash"] = map[string]any{"type": "string"}
+					props["nonce"] = map[string]any{"type": "string"}
+					props["createdAt"] = map[string]any{"type": "string"}
+					props["payload"] = map[string]any{"type": "object"}
+					props["signature"] = map[string]any{"type": "string"}
+					props["prevHash"] = map[string]any{"type": "string"}
+					required = append(required, "keyId", "policyVersion", "policyHash", "nonce", "signature", "payload")
+				case "attest":
+					props["keyId"] = map[string]any{"type": "string"}
+					props["messageId"] = map[string]any{"type": "integer"}
+					props["policyVersion"] = map[string]any{"type": "integer"}
+					props["status"] = map[string]any{"type": "string", "enum": []any{"ok", "deny"}}
+					props["comment"] = map[string]any{"type": "string"}
+					props["createdAt"] = map[string]any{"type": "string"}
+					props["signature"] = map[string]any{"type": "string"}
+					required = append(required, "keyId", "messageId", "policyVersion", "status", "signature")
+				case "verify":
+					props["messageId"] = map[string]any{"type": "integer"}
+					required = append(required, "messageId")
+				case "consume", "subscribe":
+					props["consumer"] = map[string]any{"type": "string"}
+					props["condition"] = map[string]any{"type": "string"}
+					props["filter"] = map[string]any{"type": "object"}
+				case "policy":
+					props["version"] = map[string]any{"type": "integer"}
 				}
 			case models.ObjectKindSchedule:
 				if method == "set" {
@@ -236,6 +270,8 @@ func (s *Server) handleDataObjectTool(ctx context.Context, p models.Principal, a
 		case "consume", "subscribe":
 			return s.data.Bus.Consume(ctx, scope, strutil.AsString(params["consumer"]), int(asFloatOr(params["max"], 10)))
 		}
+	case models.ObjectKindSecureBus:
+		return s.handleSecureBusTool(ctx, p, accessCtx, scope, method, params)
 	case models.ObjectKindSchedule:
 		switch method {
 		case "set":
@@ -270,10 +306,59 @@ func (s *Server) handleDataObjectTool(ctx context.Context, p models.Principal, a
 	return nil, policy.ErrUnknownMethod
 }
 
+func (s *Server) handleSecureBusTool(ctx context.Context, p models.Principal, accessCtx models.APIAccessContext, scope *policy.Scope, method string, params map[string]any) (any, error) {
+	if s.data.SecureBus == nil {
+		_ = scope.Rollback(ctx)
+		return nil, fmt.Errorf("securebus not configured")
+	}
+	tokenID := ""
+	if accessCtx.AccessToken != nil {
+		tokenID = accessCtx.AccessToken.ID
+	}
+	subject := models.SubjectKeyForPrincipal(p)
+	switch method {
+	case "policy":
+		return s.data.SecureBus.GetPolicy(ctx, scope, int(asFloatOr(params["version"], 0)))
+	case "publish":
+		payload, _ := params["payload"].(map[string]any)
+		createdAt, _ := parseTime(strutil.AsString(params["createdAt"]))
+		return s.data.SecureBus.Publish(ctx, scope, securebus.PublishInput{
+			KeyID: strutil.AsString(params["keyId"]), SubjectKey: subject, TokenID: tokenID,
+			PolicyVersion: int(asFloat(params["policyVersion"])), PolicyHash: strutil.AsString(params["policyHash"]),
+			Nonce: strutil.AsString(params["nonce"]), CreatedAt: createdAt, Payload: payload,
+			Signature: strutil.AsString(params["signature"]), PrevHash: strutil.AsString(params["prevHash"]),
+		})
+	case "attest":
+		createdAt, _ := parseTime(strutil.AsString(params["createdAt"]))
+		return s.data.SecureBus.Attest(ctx, scope, securebus.AttestInput{
+			KeyID: strutil.AsString(params["keyId"]), SubjectKey: subject, TokenID: tokenID,
+			MessageID: int64(asFloat(params["messageId"])), PolicyVersion: int(asFloat(params["policyVersion"])),
+			Status: strutil.AsString(params["status"]), Comment: strutil.AsString(params["comment"]),
+			CreatedAt: createdAt, Signature: strutil.AsString(params["signature"]),
+		})
+	case "verify":
+		return s.data.SecureBus.Verify(ctx, scope, int64(asFloat(params["messageId"])))
+	case "keys":
+		return s.data.SecureBus.Keys(ctx, scope)
+	case "consume", "subscribe":
+		filter, _ := params["filter"].(map[string]any)
+		return s.data.SecureBus.Consume(ctx, scope, strutil.AsString(params["consumer"]), strutil.AsString(params["condition"]), filter, int(asFloatOr(params["max"], 10)))
+	}
+	_ = scope.Rollback(ctx)
+	return nil, policy.ErrUnknownMethod
+}
+
+func parseTime(s string) (time.Time, error) {
+	if s == "" {
+		return time.Time{}, nil
+	}
+	return time.Parse(time.RFC3339Nano, s)
+}
+
 func splitKindMethod(toolName string) (models.ObjectKind, string, bool) {
 	for _, kind := range []models.ObjectKind{
 		models.ObjectKindVariable, models.ObjectKindCounter, models.ObjectKindTable,
-		models.ObjectKindQueue, models.ObjectKindBus, models.ObjectKindSchedule,
+		models.ObjectKindQueue, models.ObjectKindBus, models.ObjectKindSecureBus, models.ObjectKindSchedule,
 		models.ObjectKindLog, models.ObjectKindGit,
 	} {
 		prefix := string(kind) + "_"

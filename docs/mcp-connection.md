@@ -31,6 +31,14 @@ WWW-Authenticate: Bearer resource_metadata="https://<host>/.well-known/oauth-pro
 - Put `Authorization: Bearer <token>` in the MCP client config.
 - Keycloak / Google / generic OIDC JWTs and Teleport Proxy JWT are still accepted when configured.
 
+### Securebus signing sidecar
+
+Claude Desktop and Cursor cannot hold agent private keys. For `securebus_publish` / `securebus_attest`, run [`cmd/securebus-agent`](../cmd/securebus-agent) as a local stdio MCP server (see [setup.md](setup.md)). The sidecar signs with a key under `~/.synamcps/securebus/` and forwards to SynaMCPs. Read tools (`policy`, `verify`, `consume`) also work against the remote `/mcp` without the sidecar.
+
+### Securebus signing sidecar
+
+Claude Desktop and Cursor cannot hold agent private keys. For `securebus_publish` / `securebus_attest`, run [`cmd/securebus-agent`](../cmd/securebus-agent) as a local stdio MCP server (see [setup.md](setup.md)). The sidecar signs with a key under `~/.synamcps/securebus/` and forwards to SynaMCPs. Read tools (`policy`, `verify`, `consume`) also work against the remote `/mcp` without the sidecar.
+
 ## Streamable HTTP Example
 
 1. Obtain bearer token (OAuth Connectors flow or static access token).

@@ -159,3 +159,7 @@ queue:
 bus:
   kafka:
     brokers: []
+
+securebus:
+  policy_signing_key_env_ref: "env:SECUREBUS_POLICY_SIGNING_KEY"
+  policy_grace_seconds: 300

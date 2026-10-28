@@ -17,6 +17,8 @@ func Methods(kind models.ObjectKind) []string {
 		return []string{"enqueue", "dequeue", "peek", "size"}
 	case models.ObjectKindBus:
 		return []string{"produce", "consume", "subscribe"}
+	case models.ObjectKindSecureBus:
+		return []string{"policy", "publish", "attest", "verify", "consume", "subscribe", "keys"}
 	case models.ObjectKindSchedule:
 		return []string{"set", "get", "list"}
 	case models.ObjectKindLog:
@@ -42,7 +44,8 @@ func HasMethod(kind models.ObjectKind, method string) bool {
 
 func IsMutating(method string) bool {
 	switch method {
-	case "get", "search", "peek", "size", "list", "tail", "status", "log", "diff", "show", "consume", "subscribe":
+	case "get", "search", "peek", "size", "list", "tail", "status", "log", "diff", "show",
+		"consume", "subscribe", "policy", "verify", "keys":
 		return false
 	default:
 		return true

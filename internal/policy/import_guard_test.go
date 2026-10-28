@@ -33,6 +33,7 @@ func TestKindPackagesDoNotImportPgxpool(t *testing.T) {
 		"internal/sqltables",
 		"internal/queue",
 		"internal/bus",
+		"internal/securebus",
 		"internal/gitstore",
 	}
 	fset := token.NewFileSet()

@@ -147,6 +147,10 @@ bus:
   kafka:
     brokers: [] # e.g. ["kafka:9092"] when profile kafka is on
 
+securebus:
+  policy_signing_key_env_ref: "env:SECUREBUS_POLICY_SIGNING_KEY" # 32-byte seed hex/base64; empty = ephemeral (dev)
+  policy_grace_seconds: 300
+
 mcp_proxy:
   enabled: true
   secrets_encryption_key_env_ref: "env:MCP_PROXY_SECRETS_KEY"

@@ -12,7 +12,13 @@ func TestMethodsClosedPerKind(t *testing.T) {
 	if !HasMethod("storage", "search") {
 		t.Fatal("storage search")
 	}
-	if !ValidKind("git") || ValidKind("unknown") {
+	if !HasMethod("securebus", "publish") || !HasMethod("securebus", "policy") || HasMethod("securebus", "produce") {
+		t.Fatal("securebus method set")
+	}
+	if IsMutating("policy") || IsMutating("verify") || !IsMutating("publish") {
+		t.Fatal("securebus mutating flags")
+	}
+	if !ValidKind("git") || !ValidKind("securebus") || ValidKind("unknown") {
 		t.Fatal("kind validation")
 	}
 }

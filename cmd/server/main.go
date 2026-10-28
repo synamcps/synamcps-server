@@ -18,6 +18,7 @@ import (
 	"github.com/redis/go-redis/v9"
 	"github.com/synamcps/synamcps-server/internal/access"
 	"github.com/synamcps/synamcps-server/internal/agent"
+	"github.com/synamcps/synamcps-server/internal/agentkeys"
 	"github.com/synamcps/synamcps-server/internal/auth"
 	"github.com/synamcps/synamcps-server/internal/auth/oauthas"
 	"github.com/synamcps/synamcps-server/internal/bus"
@@ -36,6 +37,7 @@ import (
 	"github.com/synamcps/synamcps-server/internal/queue"
 	"github.com/synamcps/synamcps-server/internal/schedule"
 	"github.com/synamcps/synamcps-server/internal/secrets"
+	"github.com/synamcps/synamcps-server/internal/securebus"
 	"github.com/synamcps/synamcps-server/internal/session"
 	"github.com/synamcps/synamcps-server/internal/sqltables"
 	"github.com/synamcps/synamcps-server/internal/storage/blob"
@@ -202,14 +204,24 @@ func main() {
 	logSvc := logstore.NewService(blobStore)
 	queueSvc := queue.NewService(rabbitAMQP)
 	busSvc := bus.NewService(kafkaBus)
+	agentKeyStore := agentkeys.NewStore(pgPool, counterRedis, cfg.Redis.KeyPrefix)
+	policySigner, signErr := securebus.NewPolicySignerFromMaterial(cfg.SecureBusPolicySigningKey())
+	if signErr != nil {
+		log.Fatalf("init securebus policy signer: %v", signErr)
+	}
+	if cfg.SecureBus.PolicyGraceSeconds <= 0 {
+		cfg.SecureBus.PolicyGraceSeconds = 300
+	}
+	secureBusSvc := securebus.NewService(agentKeyStore, policySigner, cfg.SecureBus.PolicyGraceSeconds)
 	scheduleSvc := schedule.NewService()
 	tableSvc := sqltables.NewService()
 	gitSvc := gitstore.NewService(blobStore)
 	dataHandler := &httpapi.DataObjectHandler{
 		Access: accessService, Opener: opener,
 		Variable: variableSvc, Counter: counterSvc, Log: logSvc,
-		Queue: queueSvc, Bus: busSvc, Schedule: scheduleSvc, Table: tableSvc, Git: gitSvc,
+		Queue: queueSvc, Bus: busSvc, SecureBus: secureBusSvc, Schedule: scheduleSvc, Table: tableSvc, Git: gitSvc,
 	}
+	agentKeysHandler := &httpapi.AgentKeysHandler{Store: agentKeyStore}
 	go schedule.NewWorker(pgPool, scheduleSvc, logger).Run(ctx)
 	go logstore.NewWorker(pgPool, logSvc, logger).Run(ctx)
 
@@ -230,10 +242,15 @@ func main() {
 		OAuthASEnabled:        cfg.OAuthAS.Enabled,
 		PublicBaseURL:         cfg.OAuthAS.PublicBaseURL,
 		DataObjects:           dataHandler,
+		AgentKeys:             agentKeysHandler,
 	})
 	rootMux.Handle("/api/", apiRouter)
 	authResolver := httpapi.NewAuthResolver(gateway, sessions)
 	dataHandler.RegisterGit(rootMux, authResolver.Middleware)
+	rootMux.HandleFunc("/.well-known/synamcps-keys", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(policySigner.JWKS())
+	})
 	rootMux.HandleFunc("/api/capabilities", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
@@ -242,6 +259,10 @@ func main() {
 				"legacy_sse":      cfg.Transport.LegacySSE,
 			},
 			"auth_methods": buildAuthMethods(cfg),
+			"securebus": map[string]any{
+				"policy_schema": securebus.PolicySchemaID,
+				"jwks":          "/.well-known/synamcps-keys",
+			},
 		})
 	})
 	if cfg.OAuthAS.Enabled {
@@ -274,7 +295,7 @@ func main() {
 	})
 	mcpServer.AttachDataServices(mcp.DataServices{
 		Opener: opener, Variable: variableSvc, Counter: counterSvc, Log: logSvc,
-		Queue: queueSvc, Bus: busSvc, Schedule: scheduleSvc, Table: tableSvc, Git: gitSvc,
+		Queue: queueSvc, Bus: busSvc, SecureBus: secureBusSvc, Schedule: scheduleSvc, Table: tableSvc, Git: gitSvc,
 	})
 	if cfg.Transport.StreamableHTTP {
 		streamablehttp.NewHandler(mcpServer, gateway, sessions).Register(rootMux)

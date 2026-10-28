@@ -36,6 +36,7 @@ pre{background:#020617;padding:12px;border-radius:8px;overflow:auto}
 <button onclick="showTab('storage')">Storage</button>
 <button onclick="showTab('addItem')">Add item</button>
 <button onclick="showTab('tokens')">Tokens</button>
+<button onclick="showTab('agentKeys')">Agent keys</button>
 <button onclick="showTab('mcpServers')">MCP Servers</button>
 <button onclick="showTab('usage')">Usage</button>
 <button onclick="showTab('connect')">MCP Connect</button>
@@ -141,6 +142,7 @@ pre{background:#020617;padding:12px;border-radius:8px;overflow:auto}
     <option value="table">table</option>
     <option value="queue">queue</option>
     <option value="bus">bus</option>
+    <option value="securebus">securebus</option>
     <option value="schedule">schedule</option>
     <option value="log">log</option>
     <option value="git">git</option>
@@ -174,7 +176,28 @@ pre{background:#020617;padding:12px;border-radius:8px;overflow:auto}
 <button onclick="putObjectACL()">Grant</button>
 <pre id="objectAclOut"></pre>
 </div>
+<div class="card" id="securebusPanel" style="display:none">
+<b>Securebus policy</b>
+<textarea id="securebusPolicyJson" rows="12" style="width:100%;font-family:monospace"></textarea>
+<button onclick="loadSecurebusPolicy()">Load policy</button>
+<button onclick="saveSecurebusPolicy()">Save policy</button>
+<pre id="securebusPolicyOut"></pre>
+<b>WebCrypto attest</b><br/>
+<button onclick="registerBrowserKey()">Register browser key</button>
+<input id="attestMessageId" placeholder="messageId" size="8"/>
+<select id="attestStatus"><option>ok</option><option>deny</option></select>
+<input id="attestComment" placeholder="comment"/>
+<button onclick="attestSecurebusMessage()">Attest</button>
+<input id="verifyMessageId" placeholder="messageId" size="8"/>
+<button onclick="verifySecurebusMessage()">Verify</button>
+<pre id="securebusAttestOut"></pre>
+</div>
 <div id="objectsOut"></div>
+</section>
+
+<section id="agentKeys"><h2>Agent keys</h2>
+<button onclick="loadAgentKeys()">Refresh</button>
+<div id="agentKeysOut" class="card"></div>
 </section>
 
 <section id="storage"><h2>Storage</h2>

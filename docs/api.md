@@ -18,6 +18,7 @@ Invoke methods via `POST /api/{kind}/{objectId}/{method}` (same names as MCP `{k
 | table | query |
 | queue | enqueue, dequeue, peek, size |
 | bus | produce, consume, subscribe (SSE) |
+| securebus | policy, publish, attest, verify, consume, subscribe, keys (signed; see [securebus-envelope.md](securebus-envelope.md)) |
 | schedule | set, get, list; wait on `GET /api/schedule/{id}/wait` |
 | log | add, tail (`config.rotate_after` editable via `PATCH /api/objects/{id}`) |
 | git | init, clone, add, commit, status, log, diff, branch, checkout, fetch, pull, push, tag, show, remote; smart HTTP at `/git/{objectId}/` |
@@ -28,6 +29,15 @@ Catalog and ACL:
 - `POST /api/objects` body `{kind,slug,name,backend,config}`
 - `GET|PATCH|DELETE /api/objects/{id}`
 - `GET|PUT /api/objects/{id}/acl`
+- `GET|PUT /api/objects/{id}/policy` (securebus JSON policy; `PUT` requires owner/admin)
+
+Agent keys (client custody):
+
+- `POST /api/agent-keys/challenge`
+- `POST /api/agent-keys` (proof-of-possession register)
+- `GET /api/agent-keys`
+- `DELETE /api/agent-keys/{id}`
+- Public JWKS for policy signatures: `GET /.well-known/synamcps-keys`
 
 Optional backends: queue `backend=rabbitmq` (`queue.rabbitmq.url`), bus `backend=kafka` (`bus.kafka.brokers`). Compose profiles `rabbitmq` and `kafka`.
 
