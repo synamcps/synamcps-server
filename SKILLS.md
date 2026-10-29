@@ -197,6 +197,7 @@ Examples:
 - `scripts/examples/audit-unused-tokens.sh`: list tokens that have never been used or are older than a threshold.
 - `scripts/examples/bulk-grant-acl.sh`: grant one ACL role to many subject keys.
 - `scripts/examples/export-usage-metrics.sh`: export usage summary/series JSON.
+- `examples/securebus/`: LangChain Chat / Attester / Executor demo on a signed securebus topic (see that README; not part of `examples-smoke`).
 
 Automation conventions:
 

@@ -1,0 +1,34 @@
+# Copy to config.local.yaml and fill in secrets (config.local.yaml is gitignored).
+# Env overrides: SYNA_BASE_URL, SYNA_TOKEN, SYNA_TOKEN_ID, STORAGE_ID, OPENAI_API_KEY, OPENAI_BASE_URL
+
+base_url: http://localhost:8080
+token: ""          # opaque access token secret
+token_id: ""       # access token id (Admin → Tokens), required for PoP key registration
+storage_id: ""     # knowledge storage id for file uploads
+
+topic_slug: securebus-demo
+topic_name: Securebus LangChain Demo
+key_dir: keys
+
+llm:
+  # Compatible with OpenAI Chat Completions (or a local gateway).
+  model: gpt-4o-mini
+  api_key: ""
+  base_url: ""     # optional, e.g. https://api.openai.com/v1
+
+# Attester policy text (natural language rules evaluated by the LLM).
+rule_text: |
+  Approve only tool_call messages where tool is "browse" and args.url is a public https URL.
+  Deny localhost, private/link-local IPs, non-https schemes, and any tool other than browse.
+  If the user message clearly refers to an uploaded file but files[] is empty, deny.
+  Prefer a short comment explaining the decision.
+
+# Filled by bootstrap.py
+object_id: ""
+agents:
+  chat:
+    key_id: ""
+  attester:
+    key_id: ""
+  executor:
+    key_id: ""

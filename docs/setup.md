@@ -73,6 +73,10 @@ Cursor / Claude Desktop stdio config example:
 
 Tools: `keygen`, `register`, `securebus_publish`, `securebus_attest`, plus read tools (`policy`, `verify`, `consume`, `keys`).
 
+### Securebus LangChain example
+
+A three-agent demo (Streamlit Chat → Attester → Playwright Executor) lives in `examples/securebus/`. It registers client-held Ed25519 keys, publishes signed tool-call messages, attests against config `rule_text`, and only then browses. See [examples/securebus/README.md](../examples/securebus/README.md).
+
 ## Deployment model
 
 The server is designed as a **single-instance** deployment when Redis is not

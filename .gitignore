@@ -27,6 +27,13 @@ go.work.sum
 # env file
 .env
 
+# Securebus LangChain example local state
+examples/securebus/.venv/
+examples/securebus/keys/
+examples/securebus/.pytest_cache/
+examples/securebus/**/__pycache__/
+**/config.local.yaml
+
 # Editor/IDE
 # .idea/
 # .vscode/
